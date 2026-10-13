@@ -337,12 +337,14 @@ export async function recordServerUnreachable(opts: {
   affectedProjects: number;
   existing: ServiceIncident | undefined;
 }): Promise<IncidentTransition> {
-  const networkUnavailable = isNetworkUnavailableError(opts.reason);
+  // A local network/route failure is an unavailable observation, not evidence
+  // that this server failed. Preserve existing incidents without changing them.
+  if (isNetworkUnavailableError(opts.reason)) return "unchanged";
   if (opts.existing) {
     await repos.serviceIncident.touch(opts.existing.id, { reason: opts.reason });
-    // A connection gap is recorded without paging for every target. If a later
-    // check can use the network but still cannot reach this host, notify once.
-    if (networkUnavailable || opts.existing.notifiedAt || !isNetworkUnavailableError(opts.existing.reason)) {
+    // Older versions persisted network gaps without paging. If a later check
+    // can use the network but still cannot reach this host, notify once.
+    if (opts.existing.notifiedAt || !isNetworkUnavailableError(opts.existing.reason)) {
       return "unchanged";
     }
   }
@@ -359,10 +361,6 @@ export async function recordServerUnreachable(opts: {
     confirmations: 1,
   });
   if (!incident) return "unchanged";
-  // Keep the existing durable observation record for recovery and aggregation,
-  // without claiming that each server failed when Openship lost its network.
-  if (networkUnavailable) return "opened";
-
   const projects =
     opts.affectedProjects === 1 ? "1 project" : `${opts.affectedProjects} projects`;
   await announce({

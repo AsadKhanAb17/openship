@@ -1016,11 +1016,12 @@ async function sweepServerGroup(ctx: GroupContext): Promise<void> {
 
     // One incident for the box; every project in this group keeps whatever incidents
     // it had, and none of them are retired (they're absent from `swept`).
-    if (networkUnavailable) summary.offline++;
-    else {
-      ctx.unreachableServers.add(watchGroupKey(serverId, organizationId));
-      summary.unreachable = ctx.unreachableServers.size;
+    if (networkUnavailable) {
+      summary.offline++;
+      return;
     }
+    ctx.unreachableServers.add(watchGroupKey(serverId, organizationId));
+    summary.unreachable = ctx.unreachableServers.size;
     const target = await incidentServerId(serverId, organizationId);
     if (!target) {
       // No server row to hang the incident on (a control-plane docker socket that

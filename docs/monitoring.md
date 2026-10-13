@@ -4,6 +4,20 @@ For failures inside Openship itself, see [Structured error reporting](structured
 That covers request references, exceptions, background operations and configurable log destinations.
 The monitoring system below measures deployed applications and traffic.
 
+## Connection interruptions
+
+An unavailable observation does not prove that a server or application is down.
+The health watcher reuses the control plane's network interface check and explicit
+transport failures (`ENETUNREACH`, `ENETDOWN`, `ENONET`). During those gaps it reports
+unknown workload health and an offline scan count, without opening server incidents
+or modifying existing confirmed failures. Only a successful observation establishes
+recovery. It does not poll a public Internet endpoint or add another monitoring job.
+
+A refused connection, host-specific routing failure or timeout alone cannot prove
+that the control plane lost Internet access. Those still follow the normal server
+incident path, so genuine outages remain visible. Older history entries are not
+silently removed by this classification change.
+
 Openship's per-project Monitoring tab answers three questions — what is my app using
 right now, where is my traffic coming from, and what is it returning — and it is designed
 so that answering them costs your visitors nothing.

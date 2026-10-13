@@ -97,18 +97,16 @@ describe("desktop monitoring recovery through HTTP and the SDK", () => {
     // serialized SSH/Docker error through persistence, HTTP and the SDK too.
     h.fail = true;
     h.failureReason = "(HTTP code 502) unexpected - Could not reach Docker over SSH: connect ENETUNREACH 192.0.2.1:22 - Local (0.0.0.0:63263)";
-    expect(await scan()).toMatchObject({ offline: 1, unreachable: 0, opened: 1 });
+    expect(await scan()).toMatchObject({ offline: 1, unreachable: 0, opened: 0 });
     const connection = await client.issues.list();
-    expect(connection.issues).toMatchObject([{
-      kind: "monitoring_offline", severity: "action_required",
-      details: { affectedServers: [{ id: serverId }] }, resolveWith: [],
-    }]);
-    expect(connection.counts).toMatchObject({ outage: 0, actionRequired: 1, total: 1 });
-    expect(await repos.serviceIncident.findOpenForServer(serverId)).toMatchObject({ notifiedAt: null });
+    expect(connection.issues).toEqual([]);
+    expect(connection.counts).toMatchObject({ outage: 0, actionRequired: 0, total: 0 });
+    expect(await repos.serviceIncident.findOpenForServer(serverId)).toBeUndefined();
+    expect((await client.issues.health()).workloads).toMatchObject([{ state: "unknown" }]);
     expect(h.notify).not.toHaveBeenCalled();
 
     h.fail = false;
-    expect(await scan()).toMatchObject({ offline: 0, unreachable: 0, resolved: 1 });
+    expect(await scan()).toMatchObject({ offline: 0, unreachable: 0, resolved: 0 });
     expect(await repos.serviceIncident.findOpenForServer(serverId)).toBeUndefined();
     expect((await client.issues.list()).issues).toEqual([]);
     expect(h.notify).not.toHaveBeenCalled();
@@ -141,7 +139,6 @@ describe("desktop monitoring recovery through HTTP and the SDK", () => {
     expect(await repos.serviceIncident.findOpenForServer(serverId)).toBeUndefined();
     expect((await client.issues.list()).issues).toEqual([]);
     expect((await client.issues.list({ status: "resolved" })).issues).toMatchObject([
-      { kind: "server_unreachable", resolvedAt: expect.any(String) },
       { kind: "server_unreachable", resolvedAt: expect.any(String) },
     ]);
     expect(h.notify.mock.calls.map(([event]) => event.eventType)).toEqual(["server.unreachable", "server.reachable"]);

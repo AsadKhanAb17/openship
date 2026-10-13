@@ -1347,15 +1347,17 @@ describe("unreachable server", () => {
     for (const serverId of ["network-a", "network-b", "network-c"]) seedApp({ serverId });
     await tick();
     h.listThrows = "(HTTP code 502) unexpected - Cannot reach Docker over SSH: connect ENETUNREACH 192.0.2.1:22 - Local (0.0.0.0:63263)";
-    expect(await tick()).toMatchObject({ offline: 3, unreachable: 0, opened: 3, resolved: 0 });
+    expect(await tick()).toMatchObject({ offline: 3, unreachable: 0, opened: 0, resolved: 0 });
     const { listWorkloadHealthSnapshots } = await import("@repo/platform/engine/modules/monitoring/health-watch");
     expect(listWorkloadHealthSnapshots("org1").every((row) => row.state === "unknown")).toBe(true);
-    expect(h.incidents.every((row) => row.kind === "server_unreachable")).toBe(true);
+    expect(h.incidents).toEqual([]);
     await tick();
+    expect(h.incidents).toEqual([]);
     expect(h.emit).not.toHaveBeenCalled();
 
     h.listThrows = null;
-    expect(await tick()).toMatchObject({ offline: 0, resolved: 3 });
+    expect(await tick()).toMatchObject({ offline: 0, resolved: 0 });
+    expect(h.incidents).toEqual([]);
     expect(listWorkloadHealthSnapshots("org1").every((row) => row.state === "healthy")).toBe(true);
     expect(h.emit).not.toHaveBeenCalled();
   });
@@ -1381,6 +1383,33 @@ describe("unreachable server", () => {
     h.listThrows = "connect ENETDOWN 192.0.2.1:22";
     expect(await tick()).toMatchObject({ offline: 1, resolved: 0, stale: 0 });
     expect(openFor(projectId)).toHaveLength(1);
+    expect(h.emit).not.toHaveBeenCalled();
+  });
+
+  it("preserves a confirmed server outage through local network loss until a successful read", async () => {
+    seedApp({ serverId: "confirmed-server-then-network" });
+    h.listThrows = "connect ECONNREFUSED 192.0.2.1:22";
+    expect(await tick()).toMatchObject({ opened: 1, unreachable: 1 });
+    const before = { ...h.incidents[0] };
+    h.emit.mockClear();
+
+    h.listThrows = "connect ENETUNREACH 192.0.2.1:22";
+    expect(await tick()).toMatchObject({ offline: 1, opened: 0, resolved: 0 });
+    expect(h.incidents).toEqual([before]);
+    expect(h.emit).not.toHaveBeenCalled();
+
+    h.listThrows = null;
+    expect(await tick()).toMatchObject({ resolved: 1 });
+    expect(emitted("server.reachable")).toHaveLength(1);
+  });
+
+  it("does not persist a local network failure through the incident entry point", async () => {
+    const { recordServerUnreachable } = await import("@repo/platform/engine/modules/monitoring/incident.service");
+    expect(await recordServerUnreachable({
+      organizationId: "org1", serverId: "no-route", serverName: "remote",
+      reason: "connect ENETDOWN 192.0.2.1:22", affectedProjects: 1, existing: undefined,
+    })).toBe("unchanged");
+    expect(h.incidents).toEqual([]);
     expect(h.emit).not.toHaveBeenCalled();
   });
 
