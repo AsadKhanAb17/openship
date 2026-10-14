@@ -3,6 +3,176 @@
 All notable changes to Openship. Versions follow [semver](https://semver.org);
 the in-app updater surfaces critical advisories from `release-advisories.json`.
 
+## 0.9.2
+
+This release expands the app catalog with document, media and self-hosted AI
+apps, adds NVIDIA GPU configuration for Docker servers, and retains build caches
+for faster repeat deployments. It also improves Cloud project ownership,
+checkout recovery, instance connections, monitoring history, webmail and
+deployment safety. These notes cover all changes since the published 0.9.1 tag.
+
+### Apps and GPU support
+
+- **Install more document and media apps** — Paperless-ngx, Wiki.js, Homepage,
+  Immich and Jellyfin now have one-click templates with pinned images, persistent
+  data and protected owner setup. Homepage uses a password-protected frontend
+  without Docker socket access. Immich uses CPU machine-learning workers and
+  requires at least 6 GiB RAM and two CPU cores; its AMD64 worker needs x86-64-v2.
+- **Run AI apps on your own server** — Ollama supports CPU or one NVIDIA GPU,
+  with a private model API and persistent models. Open WebUI provides a protected
+  chat interface for an existing model backend, with persistent chats and signup
+  disabled by default. Both use the standard app installer. vLLM is a disabled
+  preview pending real GPU validation. All three declare `supportsCloud: false`
+  and cannot be installed on managed Openship Cloud servers.
+- **Preserve NVIDIA configuration through the deployment cycle** — Docker GPU
+  device requests and legacy `runtime: nvidia` settings survive Compose import,
+  SDK/CLI sync and live-container adoption. Invalid or unsupported requests fail
+  before images are pulled or services are replaced. Server detection, manual
+  GPU hints and destination badges help select an existing NVIDIA Docker host;
+  this does not provision GPUs or add GPU capacity to Cloud plans.
+- **Configure private shared memory** — service `shmSize` accepts byte counts or
+  Compose size suffixes through the same API, SDK/CLI import and Docker deployment
+  path. Inspection and adoption preserve it without sharing the host IPC namespace.
+- **Pull WordPress and Odoo without a custom build** — new catalog installations
+  mount their setup helpers beside the existing official images, removing the
+  previous helper-only build. WordPress initializes its owner through PHP without
+  bundling WP-CLI. Existing installations keep their saved recipes; the explicit
+  preview/apply repair tool accepts only exact retired catalog recipes and
+  preserves databases, credentials, volumes and routing.
+
+### Builds and deployment configuration
+
+- **Reuse build caches without keeping temporary workers** — Cloud Docker builds
+  retain project-owned BuildKit state, and supported generated builds use package
+  and compiler cache mounts. Temporary workers still stop after completion,
+  failure or cancellation. Collection protects active work, retained deployment
+  images and app data, with a 5 GiB host retention target and seven-day idle expiry
+  for managed BuildKit state. These are retention targets rather than disk quotas.
+  Custom Dockerfiles remain authoritative; automatic mounts can be disabled with
+  `OPENSHIP_BUILD_CACHE_MOUNTS=false`.
+- **Use full VM capacity unless you set limits** — omitted or zero build/service
+  limits remain uncapped inside the selected VM. Catalog sizing recommendations
+  no longer become hidden service caps. Explicit limits, admission accounting and
+  concurrency safeguards remain enforced. Existing saved limits are preserved;
+  reset them explicitly to Full capacity if an earlier installer saved unwanted
+  catalog limits. The purchased VM capacity remains the outer limit.
+- **Read Docker container details reliably** — the closed response contract now
+  includes immutable `imageId`, fixing failed container-info and analytics reads.
+- **Parse complete duration values** — Compose stop and healthcheck timings and
+  role configuration share one parser. Valid signs, decimals and compound units
+  are retained; malformed or overflowing values cannot silently become shorter
+  timeouts. Unsupported Compose timings remain visible as import warnings.
+- **Opt into Laravel startup optimization** — `optimize: true` runs
+  `php artisan optimize` before the web server using runtime environment values.
+  It defaults off, leaves workers and schedulers unchanged, and prevents server
+  startup if optimization fails.
+- **Document release-command and role limits** — release commands require the
+  single-app pipeline; a database added as a service in the same project selects
+  the unsupported multi-service pipeline. A separately deployed connected
+  database keeps the app single-app. Rails role presets now declare measured
+  stop grace periods; role execution is still future work.
+
+### Cloud ownership, routing and data
+
+- **Let Cloud own new managed projects** — Desktop and connected self-hosted
+  dashboards create eligible catalog apps and Git projects through their owning
+  Cloud API. Services, routes, Actions and later operations stay with that control
+  plane, with no local project copy or fallback after an upstream failure. Existing
+  local projects, local folders/uploads and local custom app definitions retain
+  their existing path. Control-plane provisioning stays with the source instance
+  until its handoff completes.
+- **Strengthen Cloud execution and tenant boundaries** — relays require managed
+  server authorization before execution or credential issuance. Configuration
+  transfers validate ownership references and discard sender-supplied runtime
+  handles before promotion. Historical routing targets are organization-scoped,
+  and Cloud does not fall back to local SSH or API-host certificate readers.
+- **Recover missing Cloud routing Pages** — linked-server routing recognizes the
+  provider's missing-resource response and creates the required Page anchor.
+  Concurrent creation reuses an owned Page; ownership failures and unsupported
+  endpoints still stop publication.
+- **Keep multiple hostnames on one service port** — adding a domain alias retains
+  the other hostnames. Deployment URL expansion keeps the first concrete hostname
+  for that port instead of changing the app's origin to the newest alias.
+- **Isolate storage on fresh Cloud installs** — new logical volume names use the
+  immutable project ID, preventing a reinstalled app from adopting a deleted
+  project's data through a reused slug. Owned legacy and imported volume bindings
+  remain valid. Failed-install deletion offers an explicit data option and finds
+  project-owned unattached volumes; deletion preserves data unless you select it.
+- **Share native databases with authorized projects** — Use in a project can link
+  a ready native PostgreSQL or Redis database to consumers in the same organization
+  and compatible cluster. Encrypted environment settings and grants are saved
+  together, private ingress follows explicit consumers, and disconnect revokes
+  access. Referenced databases cannot be deleted or moved out from under consumers.
+
+### Checkout, sign-in and instance connections
+
+- **Continue pricing choices to checkout** — public pricing selections survive
+  sign-in and organization activation without asking you to choose again. Managed
+  server creation uses organization-scoped idempotency keys so retries reuse a
+  draft. Live Cloud pricing and payment authorization remain authoritative.
+- **Cancel an unpaid checkout and choose another plan** — pending payments use
+  the provider's owned-checkout cancellation capability, including retail payments
+  without a capacity quote. Retries retain the original checkout identity, and
+  older providers keep the supported capacity-cancellation path. A failed or
+  uncertain request is not reported as a confirmed cancellation.
+- **Find subscription cancellation from server deletion** — the confirmation links
+  directly to the selected server's Billing overview and explains the remaining
+  paid period. Removing projects does not itself stop renewal. Cancellation and
+  resumption guard against duplicate submissions and remain retryable on failure.
+- **Review the Cloud account and organization before connecting** — Desktop,
+  self-hosted and CLI consent screens show both identities and let you switch
+  either while preserving the original request. Switching requires fresh explicit
+  consent; unresolved identities block authorization with retry guidance.
+- **Find Connect and Move directly in Instance settings** — Desktop exposes both
+  actions, servers offer Connect a Desktop and move choices, and connected Desktops
+  offer reconnect or move back. Instructions distinguish connection codes, move
+  codes and destination receive codes; connecting copies no instance data.
+- **Retry migrations with the right destinations** — Edit & retry reloads the
+  available servers for its fresh draft. Imported image-only services use neutral
+  service icons instead of a misleading static-site logo.
+
+### Monitoring, mail, Actions and dashboard
+
+- **Clear resolved monitoring history** — owners/admins can confirm Clear history
+  in the dashboard or use the shared API, SDK and CLI operation. It deletes only
+  their organization's resolved incidents up to a fixed cutoff, preserving open
+  incidents, later recoveries, notifications and audit logs. Cloud and restricted
+  credentials cannot use this self-hosted history operation.
+- **Connect existing mailboxes from Cloud** — the Cloud Emails page installs the
+  standard webmail client for an existing IMAP/SMTP mailbox. It does not provision
+  or administer a mail server; managed email remains Coming soon. Desktop and
+  self-hosted mail-server flows remain available.
+- **Recover same-server webmail connectivity** — deploying webmail beside its
+  mail engine persists a host-gateway mapping while retaining the mail hostname
+  for TLS/SNI. IMAP and SMTP honor that mapping across redeploy and rollback,
+  and sign-in has a bounded connection deadline. Containerized mail startup also
+  corrects mailbox-directory ownership so Dovecot can create and deliver mail.
+- **Keep local Actions visible when Cloud is unreachable** — optional Cloud list
+  merging no longer hides local workflows, runs, runners or projects behind a
+  Cloud connection error. Operations on Cloud-owned resources retain their scope
+  and authorization requirements.
+- **Run official GitHub runners over non-root SSH** — the runner container uses
+  its supervisor's UID/GID and a writable home, keeping admission records readable
+  and work directories removable. Worker control failures include their cause.
+- **Render pages while GitHub discovery loads** — slow repository discovery no
+  longer blocks unrelated dashboard pages or the global not-found page.
+- **Complete dashboard translation coverage** — all ten supported locales now
+  have matching keys. Diagnostics and audit events use translated descriptions
+  while preserving technical details for troubleshooting.
+
+### Website and upgrade notes
+
+- **Browse Blog and expanded feature pages** — the public site adds categorized
+  articles, reading times, RSS and redirects from earlier Roadmap/Resources URLs.
+  A shared directory covers 45 feature areas, and homepage capability cards link
+  to their details. The app showcase links to available catalog apps and categories.
+- **Upgrade before using the newest templates** — templates that need entrypoint
+  overrides require Openship 0.9.2 so older installers cannot ignore their setup
+  helpers. Database migrations add native-database connection references and an
+  optional GPU hint to servers. Back up your instance database before upgrading.
+  GPU detection is advisory; NVIDIA inference still needs suitable hardware and
+  NVIDIA Container Toolkit. vLLM remains unavailable pending hardware validation.
+
 ## 0.9.1
 
 This patch adds a public app catalog, Russian dashboard support and runtime image
