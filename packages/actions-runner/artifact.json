@@ -1,1 +1,5 @@
-null
+{
+  "schemaVersion": 1,
+  "source": "ea45c5404f98c33ef5e4819bd320603280bb689aed340c0d3d3f5667de905533",
+  "image": "ghcr.io/oblien/openship-actions-runner@sha256:02b4050f9b33d1e3032ff304407aed2a080f860a41485906e804fe021ea455ce"
+}

@@ -342,3 +342,29 @@ test("the shared loader can be imported by stdin-based build tooling", () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
 });
+
+test("worker identity covers compiled and embedded sources while distribution-only edits reuse it", () => {
+  const root = mkdtempSync(join(tmpdir(), "openship-worker-identity-"));
+  try {
+    writeFileSync(join(root, "worker.go"), "worker source");
+    writeFileSync(join(root, "github-gate.cjs"), "embedded admission adapter");
+    writeFileSync(join(root, "go.mod"), "pinned dependency graph");
+    const original = runnerFingerprint(root);
+    for (const name of [
+      "distribution.mjs",
+      "distribution.test.mjs",
+      "worker_test.go",
+      "github-gate.test.cjs",
+      "README.md",
+    ])
+      writeFileSync(join(root, name), "changed packaging or tests");
+    assert.equal(runnerFingerprint(root), original);
+    writeFileSync(join(root, "github-gate.cjs"), "changed embedded admission adapter");
+    assert.notEqual(runnerFingerprint(root), original);
+    const embedded = runnerFingerprint(root);
+    writeFileSync(join(root, "go.mod"), "new pinned dependency graph");
+    assert.notEqual(runnerFingerprint(root), embedded);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -7,7 +7,6 @@ import {
   mkdtempSync,
   openSync,
   closeSync,
-  readFileSync,
   renameSync,
   rmSync,
 } from "node:fs";

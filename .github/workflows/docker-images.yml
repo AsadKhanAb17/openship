@@ -63,9 +63,11 @@ jobs:
       - name: Vet the worker
         working-directory: packages/actions-runner
         run: node test.mjs --vet
-      - name: Build and verify all four workers once
+      - name: Build or reuse and verify all four workers once
+        env:
+          OPENSHIP_ACTIONS_RUNNER_BUILD: ""
         run: |
-          node packages/actions-runner/build.mjs
+          node packages/actions-runner/assets.mjs
           node packages/actions-runner/assets.mjs --verify
           echo "WORKER_SOURCE=$(node --input-type=module -e 'import { runnerFingerprint } from "./packages/actions-runner/assets.mjs"; console.log(runnerFingerprint())')" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v3

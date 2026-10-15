@@ -15,15 +15,28 @@ export const RUNNER_TARGETS = [
 export const runnerDirectory = dirname(fileURLToPath(import.meta.url));
 const output = join(runnerDirectory, "dist");
 
-export function runnerFingerprint() {
+export function runnerFingerprint(sourceDirectory = runnerDirectory) {
   const hash = createHash("sha256");
-  for (const name of readdirSync(runnerDirectory)
+  // Only compilation inputs identify the worker. Transport helpers, tests and
+  // documentation changes can keep reusing the already-built binary release.
+  for (const name of readdirSync(sourceDirectory)
     .filter(
-      (name) => /\.(?:go|mjs|cjs)$/.test(name) || ["go.mod", "go.sum", "NOTICE"].includes(name),
+      (name) =>
+        (name.endsWith(".go") && !name.endsWith("_test.go")) ||
+        (name.endsWith(".cjs") && !name.endsWith(".test.cjs")) ||
+        [
+          "assets.mjs",
+          "build.mjs",
+          "prepare.mjs",
+          "notices.mjs",
+          "go.mod",
+          "go.sum",
+          "NOTICE",
+        ].includes(name),
     )
     .sort()) {
     hash.update(name);
-    hash.update(readFileSync(join(runnerDirectory, name)));
+    hash.update(readFileSync(join(sourceDirectory, name)));
   }
   return hash.digest("hex");
 }

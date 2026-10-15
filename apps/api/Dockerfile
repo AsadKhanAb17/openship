@@ -1,12 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM --platform=$BUILDPLATFORM golang:1.26.4-bookworm AS actions-runner
-WORKDIR /runner
-COPY packages/actions-runner/go.mod packages/actions-runner/go.sum ./
-RUN --mount=type=cache,target=/go/pkg/mod go mod download
-COPY packages/actions-runner/ ./
-RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    apt-get update && apt-get install -y --no-install-recommends nodejs \
- && node build.mjs
+# One file-only artifact holds Linux/macOS workers for both CPU architectures.
+# This stage never executes, including when the API is built for ARM64.
+ARG ACTIONS_RUNNER_IMAGE=ghcr.io/oblien/openship-actions-runner@sha256:02b4050f9b33d1e3032ff304407aed2a080f860a41485906e804fe021ea455ce
+FROM --platform=linux/amd64 ${ACTIONS_RUNNER_IMAGE} AS actions-runner
 
 # ─── Build stage ────────────────────────────────────────
 # Keep both stages on .bun-version; runtime tests cover private-CA HTTPS and async WebSocket upgrades.
@@ -18,7 +14,7 @@ COPY tsconfig.base.json ./
 COPY patches/ ./patches/
 COPY packages/ ./packages/
 COPY apps/ ./apps/
-COPY --from=actions-runner /runner/dist ./packages/actions-runner/dist
+COPY --from=actions-runner /dist ./packages/actions-runner/dist
 
 # The build died in "Resolving dependencies" — bun's network metadata resolution
 # for the whole monorepo, slow enough to trip the build's idle timeout.

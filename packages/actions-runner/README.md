@@ -24,7 +24,8 @@ when upgrading GitHub's runner.
 
 Product builds reuse the immutable worker image in `artifact.json`. The shared
 `stageActionRunnerAssets` loader checks the source fingerprint, protocol, engine,
-all four binary checksums and notices. Desktop, CLI and native release packaging
+all four binary checksums and notices. The fingerprint covers compilation and
+embedded-script inputs; distribution-only edits and tests reuse the binary release. Desktop, CLI and native release packaging
 fetch the pinned OCI layer over HTTPS and embed its files; Docker is not required
 for that fetch. The API Dockerfile copies the same files from that exact image
 digest. Installed products never fetch or compile a worker at startup.
@@ -55,7 +56,8 @@ image tag. Download its `actions-worker-pins` artifact and commit `artifact.json
 and the API Dockerfile pin together. The image must allow anonymous pulls before
 merging; a newly created GHCR package is private by default. Subsequent product
 builds reuse the digest, and the shared CI cache is independent of build-host OS
-and architecture. Registry layers and binaries are both digest-verified. Keep the
+and architecture. Registry layers and binaries are both digest-verified. The required CI test gate
+also forces a fresh anonymous install with Go and Docker removed from PATH. Keep the
 source-build path for development; never switch a release to a mutable `latest`
 worker tag.
 
