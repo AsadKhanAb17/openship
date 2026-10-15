@@ -333,3 +333,12 @@ test("the API image and native products pin the same compatible worker release",
   const dockerfile = readFileSync(join(directory, "../../apps/api/Dockerfile"), "utf8");
   assert.equal(/^ARG ACTIONS_RUNNER_IMAGE=(.+)$/m.exec(dockerfile)?.[1], descriptor.image);
 });
+
+test("the shared loader can be imported by stdin-based build tooling", () => {
+  const result = spawnSync(process.execPath, ["--input-type=module", "-"], {
+    input: `import { runnerFingerprint } from ${JSON.stringify(new URL("./assets.mjs", import.meta.url).href)}; console.log(runnerFingerprint());`,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout.trim(), /^[a-f0-9]{64}$/);
+});

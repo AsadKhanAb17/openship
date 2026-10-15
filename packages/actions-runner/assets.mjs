@@ -1,7 +1,7 @@
 /** Build-time only: every distribution stages the same verified runner assets. */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installRunnerArtifact, validateRunnerArtifact } from "./distribution.mjs";
@@ -94,7 +94,11 @@ export function stageActionRunnerAssets(target) {
   for (const name of RUNNER_ASSET_NAMES) cpSync(join(output, name), join(target, name));
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
+if (
+  process.argv[1] &&
+  existsSync(process.argv[1]) &&
+  import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href
+) {
   if (process.argv.includes("--install")) {
     const descriptor = runnerArtifact();
     if (descriptor?.source !== runnerFingerprint())
