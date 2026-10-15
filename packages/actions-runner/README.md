@@ -25,8 +25,8 @@ when upgrading GitHub's runner.
 Product builds reuse the immutable worker image in `artifact.json`. The shared
 `stageActionRunnerAssets` loader checks the source fingerprint, protocol, engine,
 all four binary checksums and notices. The fingerprint covers compilation and
-embedded-script inputs; distribution-only edits and tests reuse the binary release. Desktop, CLI and native release packaging
-fetch the pinned OCI layer over HTTPS and embed its files; Docker is not required
+embedded-script inputs; transport-module, documentation and test-only changes can
+reuse the binary release. Desktop, CLI and native release packaging fetch the pinned OCI layer over HTTPS and embed its files; Docker is not required
 for that fetch. The API Dockerfile copies the same files from that exact image
 digest. Installed products never fetch or compile a worker at startup.
 
@@ -41,6 +41,16 @@ Openship instances receive the compiled workers and do not need Go.
 node packages/actions-runner/build.mjs
 node packages/actions-runner/test.mjs
 ```
+
+For an unpublished worker in a custom API image, build the workers first, package
+those files locally, and supply that image to the API build:
+
+```sh
+docker build --platform linux/amd64 -f packages/actions-runner/Dockerfile.artifact -t openship-actions-local packages/actions-runner
+docker build --build-arg ACTIONS_RUNNER_IMAGE=openship-actions-local -f apps/api/Dockerfile .
+```
+
+Both paths use the same staging verification.
 
 The build produces Linux and macOS binaries for x64 and arm64, a checksum manifest,
 and dependency license notices. API, CLI, SDK and Desktop packaging use the same
