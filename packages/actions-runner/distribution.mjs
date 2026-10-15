@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  createReadStream,
   createWriteStream,
   mkdirSync,
   mkdtempSync,
@@ -13,9 +14,11 @@ import {
 import { dirname, join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createGunzip } from "node:zlib";
 
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const maximumLayer = 256 * 1024 * 1024;
+const maximumExpandedLayer = 1024 * 1024 * 1024;
 const mediaTypes = [
   "application/vnd.oci.image.manifest.v1+json",
   "application/vnd.docker.distribution.manifest.v2+json",
@@ -138,6 +141,23 @@ export async function installRunnerArtifact(
     );
     if (received !== layer.size || `sha256:${hash.digest("hex")}` !== layer.digest)
       throw new Error("Actions worker archive digest verification failed");
+    // GNU tar invokes gzip from PATH for -z; BSD tar does not. Decompress once
+    // with Node so product builds need only tar, with the same behavior on both.
+    const expandedArchive = join(temporary, "layer.tar");
+    let expanded = 0;
+    await pipeline(
+      createReadStream(archive),
+      createGunzip(),
+      new Transform({
+        transform(chunk, _encoding, done) {
+          expanded += chunk.length;
+          if (expanded > maximumExpandedLayer)
+            return done(new Error("Actions worker archive expands beyond its size limit"));
+          done(null, chunk);
+        },
+      }),
+      createWriteStream(expandedArchive, { flags: "wx", mode: 0o600 }),
+    );
     mkdirSync(staged);
     // Extract each expected member to an explicitly opened file. Even a malformed
     // archive cannot write symlinks, absolute paths or unrelated build files.
@@ -149,12 +169,19 @@ export async function installRunnerArtifact(
         name.startsWith("openship-actions-") ? 0o755 : 0o644,
       );
       try {
-        const result = spawnSync("tar", ["-xzOf", archive, `dist/${name}`], {
+        const result = spawnSync("tar", ["-xOf", expandedArchive, `dist/${name}`], {
           stdio: ["ignore", fd, "pipe"],
           encoding: "utf8",
           timeout: 60_000,
         });
-        if (result.status !== 0) throw new Error(`Actions worker archive is missing ${name}`);
+        if (result.error)
+          throw new Error("Actions worker extraction requires a working tar executable", {
+            cause: result.error,
+          });
+        if (result.status !== 0)
+          throw new Error(
+            `Could not extract Actions worker asset ${name}: ${result.stderr.trim().slice(0, 512)}`,
+          );
       } finally {
         closeSync(fd);
       }

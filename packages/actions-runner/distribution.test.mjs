@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,6 +96,37 @@ test("installs the same four verified workers for Desktop, CLI and API without e
       assert.deepEqual(readFileSync(join(f.destination, name)), readFileSync(join(f.dist, name)));
     assert.throws(() => readFileSync(join(f.root, "do-not-extract")), /ENOENT/);
     assert.equal(f.calls.length, 2);
+  } finally {
+    f.close();
+  }
+});
+
+test("a cold install needs only tar on PATH, with no external gzip, Go or Docker", () => {
+  const f = fixture();
+  try {
+    const tools = join(f.root, "tools");
+    mkdirSync(tools);
+    symlinkSync(execFileSync("which", ["tar"], { encoding: "utf8" }).trim(), join(tools, "tar"));
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { readFileSync } from "node:fs";
+         import { installRunnerArtifact } from ${JSON.stringify(new URL("./distribution.mjs", import.meta.url).href)};
+         import { verifyRunnerAssets, RUNNER_ASSET_NAMES } from ${JSON.stringify(new URL("./assets.mjs", import.meta.url).href)};
+         await installRunnerArtifact(${JSON.stringify(f.descriptor)}, ${JSON.stringify(f.destination)}, {
+           names: RUNNER_ASSET_NAMES,
+           verify: verifyRunnerAssets,
+           fetchImpl: async url => new Response(String(url).includes("/manifests/")
+             ? ${JSON.stringify(f.manifest.toString())}
+             : readFileSync(${JSON.stringify(join(f.root, "layer.tar.gz"))}))
+         });`,
+      ],
+      { env: { ...process.env, PATH: tools }, encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(verifyRunnerAssets(f.destination), verifyRunnerAssets(f.dist));
   } finally {
     f.close();
   }
