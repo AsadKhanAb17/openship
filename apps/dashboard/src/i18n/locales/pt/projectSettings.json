@@ -1231,5 +1231,20 @@
     "saved": "Regra salva",
     "saveFailed": "Falha ao salvar regra",
     "loadFailed": "Falha ao carregar regras"
+  },
+  "domainPaths": {
+    "title": "Roteamento por caminho",
+    "description": "Use um nome de host para vários serviços.",
+    "domain": "Domínio",
+    "path": "Prefixo do caminho",
+    "service": "Serviço",
+    "port": "Porta do contêiner",
+    "exact": "Somente caminho exato",
+    "remove": "Remover",
+    "empty": "Todos os caminhos usam o serviço principal do domínio.",
+    "add": "Adicionar caminho",
+    "help": "O caminho é mantido na solicitação ao serviço. Salve uma lista vazia para restaurar o serviço principal. Novos mapeamentos de portas podem exigir uma implantação.",
+    "saved": "Salvo. Verifique o status do roteamento do domínio.",
+    "notApplied": "A API não salvou estes caminhos. Atualize a instância e tente novamente."
   }
 }

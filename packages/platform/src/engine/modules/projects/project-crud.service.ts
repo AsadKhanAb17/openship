@@ -2,6 +2,7 @@
  * Project CRUD service - create, read, update, list, ensure.
  */
 
+import { prepareProjectDomainPaths } from "./project-domain-paths";
 import { reportCaughtError as observeCaughtError, diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import { activeDeploymentForProject, findActiveDeployment, listActiveServiceDeployments } from "@repo/platform/engine/lib/active-deployment";
 import {
@@ -1785,7 +1786,7 @@ export async function updateProject(
     data.publicEndpoints !== undefined ||
     data.port !== undefined ||
     data.routeStrategy !== undefined ||
-    data.routingConfig !== undefined;
+    data.routingConfig !== undefined || data.domainRoutes !== undefined;
   if (!changesRouting) return updateProjectUnlocked(projectId, data, organizationId);
 
   // Authorize before admission. Preparation, domain-row persistence and live
@@ -1829,9 +1830,13 @@ async function updateProjectUnlocked(
     // project at another repo with no branch/installation/webhook validation and
     // no sibling fan-out. gitUrl is derived by the linker, so it's not set here
     // either (deriving it from an owner/repo we don't apply would desync it).
+    if (key === "domainRoutes") continue; // Validated, scoped patch → canonical compositeRoutes below.
     if (GIT_SOURCE_IDENTITY_KEYS.has(key)) continue;
     if (PROJECT_IDENTITY_KEYS.has(key)) continue;
     if (raw[key] !== undefined) update[key] = raw[key];
+  }
+  if (data.domainRoutes !== undefined) {
+    update.compositeRoutes = await prepareProjectDomainPaths(p, data.domainRoutes);
   }
   Object.assign(update, runtimeProjectUpdate(p, update));
   assertRuntimeVersionTarget({ ...p, ...update });
@@ -2014,7 +2019,7 @@ async function updateProjectUnlocked(
   // Skipped when the block above already queued the complete ordered pass:
   // concurrent writers on one vhost can interleave snapshot/rollback, and the
   // loser may restore a file the winner already replaced.
-  if (data.routingConfig !== undefined && !routesReapplied) {
+  if ((data.routingConfig !== undefined || data.domainRoutes !== undefined) && !routesReapplied) {
     await withLiveProjectRuntimeMutation(projectId, async (forRouting) => {
       await reapplyCompleteProjectRouting(forRouting, []);
     });

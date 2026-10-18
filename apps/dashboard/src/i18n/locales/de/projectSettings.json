@@ -1231,5 +1231,20 @@
     "saved": "Regel gespeichert",
     "saveFailed": "Regel konnte nicht gespeichert werden",
     "loadFailed": "Regeln konnten nicht geladen werden"
+  },
+  "domainPaths": {
+    "title": "Pfadrouting",
+    "description": "Einen Hostnamen für mehrere Dienste verwenden.",
+    "domain": "Domain",
+    "path": "Pfadpräfix",
+    "service": "Dienst",
+    "port": "Container-Port",
+    "exact": "Nur exakter Pfad",
+    "remove": "Entfernen",
+    "empty": "Alle Pfade verwenden den Basisdienst der Domain.",
+    "add": "Pfad hinzufügen",
+    "help": "Der Pfad bleibt in der Anfrage an den Dienst erhalten. Eine leere Liste stellt den Basisdienst wieder her. Neue Portzuordnungen können eine Bereitstellung erfordern.",
+    "saved": "Gespeichert. Prüfe den Routingstatus der Domain.",
+    "notApplied": "Die API hat diese Pfade nicht gespeichert. Aktualisiere die Instanz und versuche es erneut."
   }
 }
