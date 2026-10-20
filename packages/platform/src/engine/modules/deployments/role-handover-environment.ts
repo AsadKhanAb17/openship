@@ -21,8 +21,8 @@ export function roleHandoverEnvironment(
   };
   return {
     ...env,
-    activate: async (config, log) => {
-      const result = await env.activate(config, log);
+    activate: async (config, log, onCreated) => {
+      const result = await env.activate(config, log, onCreated);
       await journal.recordWeb(result.containerId);
       return result;
     },

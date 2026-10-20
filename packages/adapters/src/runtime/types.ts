@@ -561,8 +561,10 @@ export interface MultiServiceGroupHandle {
 
 export interface MultiServiceDeployConfig {
   deploymentId: string;
-  /** Exact outgoing service container, before the deployment pipeline removes it. */
+  /** Exact outgoing service container, retained by the pipeline during replacement. */
   previousContainerId?: string;
+  /** Report the exact created container before start/inspect can lose the connection. */
+  onContainerCreated?: (containerId: string) => void;
   projectId: string;
   slug: string;
   serviceName: string;

@@ -90,7 +90,7 @@ export interface DeployEnvironment {
   preflight?(config: DeployConfig, promptUser: PromptUserFn): Promise<void>;
 
   /** Spin up the new deployment (container / workload / process). */
-  activate(config: DeployConfig, onLog: LogCallback): Promise<{ containerId: string; url?: string }>;
+  activate(config: DeployConfig, onLog: LogCallback, onCreated?: (id: string) => void): Promise<{ containerId: string; url?: string }>;
 
   /** Destroy a previous deployment (release slug, domain, resources). */
   deactivate(containerId: string): Promise<void>;
@@ -333,8 +333,9 @@ export async function runDeployPipeline(
   // destroying it. Two consumers: the failure path starts it again, and the success
   // path retires it. Left undefined when nothing was retained, so neither fires.
   let retainedPreviousId: string | undefined;
+  let retentionAttempted = false;
 
-  // Stop the previous deployment — best-effort, never aborts the deploy.
+  // Legacy destructive cleanup is best-effort; retained stop must be confirmed.
   // Skipped when the caller opts out (deactivatePrevious === false): the old
   // one keeps serving until the caller's own post-deploy step stops+retains it.
   const deactivatePrevious = async () => {
@@ -357,15 +358,15 @@ export async function runDeployPipeline(
       return;
     }
     logger.log("Stopping previous deployment (kept restorable until this one is healthy)…\n");
-    let stopped = false;
-    await bestEffortTeardown("failed to stop previous deployment", async () => {
-      await env.deactivateRetaining!(previousContainerId);
-      stopped = true;
-    });
-    // Only claim the retention when the stop actually landed. Recording it after a
-    // timeout would tell the failure path to "restore" a deployment that was never
-    // stopped, and the success path to retire one we may not own.
-    if (stopped) retainedPreviousId = previousContainerId;
+    retentionAttempted = true;
+    // Both workloads may share a data volume as well as a port. An uncertain
+    // stop is not permission to start a second writer.
+    await withTimeout(
+      env.deactivateRetaining(previousContainerId),
+      teardownTimeoutMs,
+      `timed out after ${teardownTimeoutMs}ms stopping the previous deployment`,
+    );
+    retainedPreviousId = previousContainerId;
   };
 
   /** Discard the retained previous deployment once the new one is live. */
@@ -400,7 +401,9 @@ export async function runDeployPipeline(
     // ── Activate the new deployment ──────────────────────────────────
     throwIfCancelled(signal);
     const onLog: LogCallback = (entry) => logger.callback(entry);
-    const { containerId, url } = await env.activate(config, onLog);
+    const { containerId, url } = await env.activate(config, onLog, id => {
+      activatedContainerId = id;
+    });
     activatedContainerId = containerId;
     throwIfCancelled(signal);
 
@@ -508,6 +511,7 @@ export async function runDeployPipeline(
       !overlap &&
       previousContainerId &&
       env.reactivatePrevious &&
+      (retentionAttempted || !env.deactivateRetaining) &&
       !(cancelled && input.keepProvisionedOnCancel)
     ) {
       try {
@@ -520,8 +524,10 @@ export async function runDeployPipeline(
         // await here would park the deployment in `deploying` instead of letting it
         // reach `failed`, which is #629 wearing the failure path's clothes.
         if (activatedContainerId && env.stopActivated) {
-          await bestEffortTeardown("couldn't stop the failed deployment before reverting", () =>
-            env.stopActivated!(activatedContainerId!),
+          await withTimeout(
+            env.stopActivated(activatedContainerId),
+            teardownTimeoutMs,
+            `timed out after ${teardownTimeoutMs}ms stopping the failed deployment before reverting`,
           );
         }
         await withTimeout(

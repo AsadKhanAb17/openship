@@ -366,6 +366,14 @@ describe("containers on one Oblien Docker workspace", () => {
     expect(captures[1]!.volumes).toEqual(captures[0]!.volumes);
     expect(ws.delete).not.toHaveBeenCalled();
   });
+  it("reuses the exact retained container's ports after its name changes between deployments", async () => {
+    const first = await runtime.deployServiceWorkload(group, config);
+    rows[0]!.Names = ["/openship-project-a-api-previous-deployment"];
+    const next = await runtime.deployServiceWorkload(group, {
+      ...config, deploymentId: "d2", previousContainerId: first.containerId,
+    });
+    expect(next.hostPortByContainerPort).toEqual(first.hostPortByContainerPort);
+  });
   it("isolates a new WordPress installation from a previous project's volumes and keeps backup identities stable", async () => {
     vi.mocked(DockerRuntime.prototype.deployServiceWorkload).mockRestore();
     const legacy = "openship-wordpress-wordpress_db_data";

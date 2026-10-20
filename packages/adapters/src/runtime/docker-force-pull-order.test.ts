@@ -19,6 +19,43 @@ const CONFIG: MultiServiceDeployConfig = {
 };
 
 describe("Docker service replacement ordering", () => {
+  it("does not remove the retained release by its legacy name when replacement creation fails", async () => {
+    const remove = vi.fn(async () => undefined);
+    const docker = {
+      getImage: vi.fn(() => ({ inspect: async () => ({ Config: {} }) })),
+      getContainer: vi.fn(() => ({ stop: vi.fn(), remove })),
+      createContainer: vi.fn().mockRejectedValue(new Error("provider throttled")),
+    };
+    const runtime = await DockerRuntime.create({ dockerSocketPath: "/tmp/openship-test-absent.sock" });
+    (runtime as unknown as { _docker: unknown })._docker = docker;
+    await expect(runtime.deployServiceWorkload(GROUP, {
+      ...CONFIG, previousContainerId: "old-container", imageAlreadyPrepared: true,
+    })).rejects.toThrow("provider throttled");
+    expect(remove).not.toHaveBeenCalled();
+    expect(docker.createContainer).toHaveBeenCalledWith(expect.objectContaining({
+      name: expect.stringMatching(/^openship-demo-api-dep-1-/),
+    }));
+  });
+  it("can reapply a service repeatedly under the same deployment while retaining its predecessor", async () => {
+    const names = new Set<string>();
+    const docker = {
+      getImage: () => ({ inspect: async () => ({ Config: {} }) }),
+      createContainer: async ({ name }: { name: string }) => {
+        if (names.has(name)) throw new Error("container name already in use");
+        names.add(name);
+        return { id: `created-${names.size}`, start: async () => {}, inspect: async () => ({ NetworkSettings: {} }) };
+      },
+    };
+    const runtime = await DockerRuntime.create({ dockerSocketPath: "/tmp/openship-test-absent.sock" });
+    (runtime as unknown as { _docker: unknown })._docker = docker;
+    const first = await runtime.deployServiceWorkload(GROUP, {
+      ...CONFIG, previousContainerId: "original", imageAlreadyPrepared: true,
+    });
+    const second = await runtime.deployServiceWorkload(GROUP, {
+      ...CONFIG, previousContainerId: first.containerId, imageAlreadyPrepared: true,
+    });
+    expect(second.containerId).not.toBe(first.containerId);
+  });
   it("pulls a missing image before inspecting startup labels for a service command", async () => {
     let acquired = false;
     const inspectImage = vi.fn(async () => {

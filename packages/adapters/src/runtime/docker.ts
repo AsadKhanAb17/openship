@@ -34,7 +34,7 @@ import { currentManagedCommandTracking } from "./cloud/command-tracking";
 import Dockerode from "dockerode";
 import { prepareDockerImage, type DockerImagePreparationOptions } from "./docker-image-preparation";
 import * as tarFs from "tar-fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { projectBuildKitWorker, removeProjectBuildKitWorker } from "./docker-buildkit-worker";
 import { readSoftwareCache } from "./docker-software-cache";
 import {
@@ -6138,7 +6138,15 @@ export class DockerRuntime implements RuntimeAdapter {
     onLog?: LogCallback,
   ): Promise<MultiServiceDeployResult> {
     const log = onLog ?? (() => {});
-    const containerName = `openship-${config.slug}-${config.serviceName}`;
+    // The pipeline retains the outgoing container until activation succeeds.
+    // Give the replacement its own name; removing the legacy service name here
+    // would destroy that recovery point even after a successful stop.
+    const serviceName = `openship-${config.slug}-${config.serviceName}`;
+    // Scoped Apply reuses the deployment ID. Include the exact predecessor so
+    // another Apply cannot collide with its retained container's name.
+    const containerName = config.previousContainerId
+      ? `${serviceName}-${config.deploymentId}-${createHash("sha256").update(config.previousContainerId).digest("hex").slice(0, 16)}`
+      : serviceName;
 
     // Resolve and validate the complete create payload before any irreversible
     // action. A malformed later port/volume/health setting must not be discovered
@@ -6222,13 +6230,15 @@ export class DockerRuntime implements RuntimeAdapter {
 
     // Flush the existing service before removing it, using Docker's normal
     // shutdown semantics even without an explicit Compose grace period.
-    try {
-      const existing = this.docker.getContainer(containerName);
-      await this.assertContainerAccess(containerName);
-      await gracefulStopBeforeRemoval(existing);
-      await existing.remove({ force: true });
-    } catch (error) {
-      if (!isDockerNotFoundError(error)) throw error;
+    if (!config.previousContainerId) {
+      try {
+        const existing = this.docker.getContainer(containerName);
+        await this.assertContainerAccess(containerName);
+        await gracefulStopBeforeRemoval(existing);
+        await existing.remove({ force: true });
+      } catch (error) {
+        if (!isDockerNotFoundError(error)) throw error;
+      }
     }
 
     // Environment variables. Inject PORT=<service port> (like the single-app
@@ -6334,10 +6344,14 @@ export class DockerRuntime implements RuntimeAdapter {
         : {}),
     });
 
+    config.onContainerCreated?.(container.id);
     try {
       await container.start();
     } catch (startErr) {
-      // Clean up the created container so it doesn't become orphaned
+      // The shared pipeline owns cleanup when it has the exact ID; it must
+      // stop this replacement before restarting the retained release.
+      if (config.onContainerCreated) throw startErr;
+      // Direct callers still clean up their own failed creation.
       try {
         await container.remove({ force: true });
       } catch (diagnosticFailure) {

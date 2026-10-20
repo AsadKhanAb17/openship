@@ -153,6 +153,7 @@ function imageRefreshFixture() {
       containerId: id, status: "running", imageId: id === "old-db" ? dbId : apiId, ip: "172.18.0.2",
     })),
     getContainerIp: vi.fn(async () => "172.18.0.3"), destroy: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined), start: vi.fn(async () => undefined),
   }) as DockerRuntime;
   h.services = [
     { id: "svc-db", projectId: "p1", name: "db", image: dbRef, enabled: true,
@@ -171,6 +172,40 @@ function imageRefreshFixture() {
       { ...dep, trigger }, runtime, logger, options);
   return { runtime, run, logger, images, inspect, pull, activate, metadata, dbRef, apiRef, dbId, apiId, nextId };
 }
+
+it.each([false, true])("Compose retains and restores the outgoing release on activation failure (Cloud: %s)", async cloud => {
+  const f = imageRefreshFixture();
+  if (cloud) Object.setPrototypeOf(f.runtime, CloudDockerRuntime.prototype);
+  let alive = true;
+  let exists = true;
+  vi.mocked(f.runtime.stop).mockImplementation(async () => { alive = false; });
+  vi.mocked(f.runtime.destroy).mockImplementation(async id => {
+    if (id === "old-api") { exists = false; alive = false; }
+  });
+  vi.mocked(f.runtime.start).mockImplementation(async () => {
+    if (!exists) throw new Error("previous container was destroyed");
+    alive = true;
+  });
+  f.activate.mockRejectedValue(new Error("provider throttled"));
+  const result = await f.run({ targetServiceIds: new Set(["svc-api"]) });
+  expect(result.services).toEqual(expect.arrayContaining([
+    expect.objectContaining({ serviceName: "api", status: "failed" }),
+  ]));
+  expect(alive).toBe(true);
+  expect(exists).toBe(true);
+  expect(f.runtime.destroy).not.toHaveBeenCalledWith("old-api");
+  expect(f.runtime.stop).not.toHaveBeenCalledWith("old-db");
+});
+
+it("Compose retires the stopped previous container only after its replacement starts", async () => {
+  const f = imageRefreshFixture();
+  const result = await f.run({ targetServiceIds: new Set(["svc-api"]) });
+  expect(result.status).toBe("ready");
+  expect(f.runtime.stop).toHaveBeenCalledWith("old-api");
+  expect(f.runtime.destroy).toHaveBeenCalledExactlyOnceWith("old-api");
+  expect(vi.mocked(f.runtime.stop).mock.invocationCallOrder[0]).toBeLessThan(f.activate.mock.invocationCallOrder[0]!);
+  expect(f.activate.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(f.runtime.destroy).mock.invocationCallOrder[0]!);
+});
 
 /** Stops the deploy at the first thing after the notice, so the test exercises the
  *  emission point and its ORDER without needing a Docker host. */
@@ -570,6 +605,7 @@ describe("compose deploy — host channel unavailable", () => {
       })),
       getContainerIp: vi.fn(async () => "172.18.0.3"),
       destroy: vi.fn(async () => undefined), pullImage, deployServiceWorkload,
+      stop: vi.fn(async () => undefined), start: vi.fn(async () => undefined),
     }) as DockerRuntime;
     h.services = [{
       id: "svc-api", projectId: "p1", name: "api", image: rowImage, build,

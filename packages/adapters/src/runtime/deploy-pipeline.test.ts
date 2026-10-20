@@ -227,7 +227,7 @@ describe("runDeployPipeline cutover ordering", () => {
     expect(events.indexOf("stop-activated:new-container")).toBeLessThan(events.indexOf("reactivate"));
   });
 
-  it("non-overlap: a failing stopActivated still attempts the revert", async () => {
+  it("non-overlap: a failed replacement stop leaves the previous release retained", async () => {
     const events: string[] = [];
     const env = recordingEnv(events, {
       canOverlap: false,
@@ -249,8 +249,8 @@ describe("runDeployPipeline cutover ordering", () => {
     const res = await runDeployPipeline(env, makeInput(), fakeLogger());
 
     expect(res.status).toBe("failed");
-    // Best-effort: a failed stop must not swallow the revert attempt.
-    expect(events).toContain("reactivate");
+    // Do not restart a second writer against the same persistent volume.
+    expect(events).not.toContain("reactivate");
   });
 
   it("overlap never stops the activated deployment — nothing to free", async () => {
@@ -596,7 +596,7 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
     expect(res.status).toBe("ready");
   });
 
-  it("non-overlap: a pre-stop that never settles does not claim a retention", async () => {
+  it("non-overlap: an unconfirmed pre-stop cannot activate a second writer", async () => {
     // The retention flag drives two later decisions, so recording it after a
     // timeout would tell the failure path to restore a deployment that was never
     // stopped and the success path to retire one we may not own.
@@ -611,11 +611,28 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
 
     const res = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
 
-    expect(res.status).toBe("ready");
+    expect(res.status).toBe("failed");
+    expect(events).not.toContain("activate");
     expect(events).not.toContain("retire");
   });
 
-  it("non-overlap: a stopActivated that never settles still attempts the revert", async () => {
+  it("stops a reported replacement after a lost start response before restoring the previous release", async () => {
+    const events: string[] = [];
+    const env = recordingEnv(events, {
+      deactivateRetaining: async () => { events.push("retain"); },
+      activate: async (_config, _log, onCreated) => {
+        onCreated?.("created-container");
+        throw new Error("start response was lost");
+      },
+      stopActivated: async id => { events.push(`stop:${id}`); },
+      reactivatePrevious: async id => { events.push(`restore:${id}`); },
+    });
+    const result = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
+    expect(result).toMatchObject({ status: "failed", containerId: "created-container" });
+    expect(events).toEqual(["retain", "stop:created-container", "restore:old"]);
+  });
+
+  it("non-overlap: an unconfirmed replacement stop cannot restart a second writer", async () => {
     const events: string[] = [];
     const env = recordingEnv(events, {
       canOverlap: false,
@@ -634,7 +651,7 @@ describe("runDeployPipeline bounds best-effort teardown (#629)", () => {
     const res = await runDeployPipeline(env, makeInput(bounded), fakeLogger());
 
     expect(res.status).toBe("failed");
-    expect(events).toContain("reactivate");
+    expect(events).not.toContain("reactivate");
   });
 
   it("non-overlap: a revert that never settles still reaches a FAILED verdict", async () => {

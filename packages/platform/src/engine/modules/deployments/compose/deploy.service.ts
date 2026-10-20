@@ -3201,9 +3201,17 @@ async function deployComposeServicesUnlocked(
         const deployEnv: DeployEnvironment = {
           ...(runtime instanceof DockerRuntime ? {
             preflight: () => runtime.prepareServiceVolumes(serviceRuntimeConfig),
+            deactivateRetaining: (id: string) => runtime.stop(id),
+            retireRetainedPrevious: (id: string) => runtime.destroy(id),
+            stopActivated: (id: string) => runtime.stop(id),
+            reactivatePrevious: (id: string) => runtime.start(id),
           } : {}),
-          activate: async (_cfg, onLog) => {
+          activate: async (_cfg, onLog, onCreated) => {
             opts?.onArtifactActivationStart?.(svc.id);
+            serviceRuntimeConfig.onContainerCreated = id => {
+              deployedContainerId = id;
+              onCreated?.(id);
+            };
             const result = await runtime.deployServiceWorkload(
               group,
               serviceRuntimeConfig,

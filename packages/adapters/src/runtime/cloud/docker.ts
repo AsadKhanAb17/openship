@@ -651,7 +651,9 @@ export class CloudDockerRuntime extends DockerRuntime {
         (container) =>
           container.Labels["openship.project"] === this.projectId &&
           container.Labels["openship.service"] === config.serviceName &&
-          container.Names.includes(`/openship-${config.slug}-${config.serviceName}`),
+          (config.previousContainerId
+            ? container.Id === config.previousContainerId
+            : container.Names.includes(`/openship-${config.slug}-${config.serviceName}`)),
       );
       const published = new Map<number, number>();
       for (const port of ports) {
