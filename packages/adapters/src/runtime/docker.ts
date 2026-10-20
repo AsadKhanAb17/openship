@@ -4542,24 +4542,6 @@ export class DockerRuntime implements RuntimeAdapter {
   }
 
   /**
-   * Reclaim dangling (untagged) images carrying THIS project's label — the
-   * superseded final-stage layers a rebuild leaves behind. NEVER a bare
-   * `docker image prune`: the label filter guarantees base/other-project/other-
-   * tool dangling layers are untouched. (Unlabeled multi-stage intermediate
-   * layers under the classic builder aren't caught — BuildKit avoids them.)
-   */
-  async pruneProjectDanglingImages(projectId: string): Promise<void> {
-    try {
-      await this.docker.pruneImages({
-        filters: { dangling: ["true"], label: [`openship.project=${projectId}`] },
-      });
-    } catch (diagnosticFailure) {
-      observeCaughtError(diagnosticFailure, "adapters/runtime/docker");
-      /* best-effort — a prune failure must never fail a build/deploy */
-    }
-  }
-
-  /**
    * Reclaim owned Cloud worker state OR native Docker Engine builder cache.
    *
    * Cloud never prunes the daemon's embedded builder. On fuse-overlayfs that

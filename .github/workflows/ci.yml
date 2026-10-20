@@ -133,6 +133,7 @@ jobs:
               test/e2e/rollback-compose-cycle.e2e.test.ts
               test/e2e/runtime-roles.e2e.test.ts
               test/e2e/image-volume-persistence.e2e.test.ts
+              test/e2e/image-gc-concurrent-build.e2e.test.ts
           # Run routing, certificate selection and the rule guard with real HTTP on
           # every PR. A missing daemon must fail, not silently skip this gate.
           - suite: Edge routing
