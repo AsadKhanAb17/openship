@@ -3035,6 +3035,7 @@ async function deployComposeServicesUnlocked(
           preparedImages.has(svc.id) ||
           isPreparedLocalImage(svc, image, opts?.preparedLocalImages),
       });
+      serviceRuntimeConfig.signal = opts?.signal;
 
       // Generated app config is host state and must exist before Docker receives
       // the corresponding bind. Explicit cohorts validated and write-probed every

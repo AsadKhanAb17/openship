@@ -561,6 +561,8 @@ export interface MultiServiceGroupHandle {
 
 export interface MultiServiceDeployConfig {
   deploymentId: string;
+  /** Owning deployment's cancellation; never start after pending cleanup is cancelled. */
+  signal?: AbortSignal;
   /** Exact outgoing service container, retained by the pipeline during replacement. */
   previousContainerId?: string;
   /** Report the exact created container before start/inspect can lose the connection. */

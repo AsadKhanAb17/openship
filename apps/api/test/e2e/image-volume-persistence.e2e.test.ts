@@ -243,6 +243,55 @@ describeDockerE2E("image-declared data survives real Docker replacement", () => 
     ]);
   });
 
+  it.each([false, true])(
+    "restores a retained Compose predecessor after failed activation (persistent data: %s)",
+    async (persistent) => {
+      const cfg = config();
+      const group = await runtime.ensureServiceGroup({ projectId: cfg.projectId, slug: cfg.slug! });
+      const service: MultiServiceDeployConfig = {
+        projectId: cfg.projectId, slug: cfg.slug!, deploymentId: cfg.deploymentId,
+        serviceName: "recovery", image: persistent ? images[0]! : "busybox:1.37.0",
+        imageAlreadyPrepared: true, command: "sleep 3600", ports: [], environment: {},
+        volumes: [], namespaceVolumes: true,
+      };
+      const old = await runtime.deployServiceWorkload(group, service);
+      await remember(old.containerId);
+      const names = await runtime.inspectNamedVolumes(old.containerId);
+      if (persistent) await command(old.containerId, "printf 'committed-record' > /data/record");
+      const next = { ...service, deploymentId: `${cfg.projectId}-v2`, previousContainerId: old.containerId };
+      let created: string | undefined;
+      const result = await runDeployPipeline({
+        preflight: () => runtime.prepareServiceVolumes(next),
+        deactivate: (id) => runtime.destroy(id),
+        deactivateRetaining: (id) => runtime.stop(id),
+        retireRetainedPrevious: (id) => runtime.destroy(id),
+        stopActivated: (id) => runtime.stop(id),
+        activate: async (_config, onLog, onCreated) => {
+          expect((await runtime.docker.getContainer(old.containerId).inspect()).State.Running).toBe(false);
+          const deployed = await runtime.deployServiceWorkload(group, {
+            ...next, onContainerCreated: (id) => { created = id; onCreated?.(id); },
+          }, onLog);
+          await remember(deployed.containerId);
+          return deployed;
+        },
+        healthCheck: async () => { throw new Error("replacement failed readiness"); },
+        reactivatePrevious: async (id) => {
+          expect(created).toBeTruthy();
+          expect((await runtime.docker.getContainer(created!).inspect()).State.Running).toBe(false);
+          await runtime.start(id);
+        },
+      }, { config: cfg, previousContainerId: old.containerId, domains: [] }, new BuildLogger());
+      expect(result.status).toBe("failed");
+      expect(result.error).toBe("replacement failed readiness");
+      expect((await runtime.docker.getContainer(old.containerId).inspect()).State.Running).toBe(true);
+      expect((await runtime.docker.getContainer(created!).inspect()).State.Running).toBe(false);
+      if (persistent) {
+        expect(await command(old.containerId, "cat /data/record")).toBe("committed-record");
+        expect(await runtime.inspectNamedVolumes(created!)).toEqual(names);
+      }
+    },
+  );
+
   it("fails preparation without stopping a container owned by another project", async () => {
     const cfg = config();
     const old = await legacy(cfg);

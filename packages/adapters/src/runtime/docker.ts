@@ -32,6 +32,8 @@
 import { reportCaughtError as observeCaughtError, diagnostics as errorDiagnostics } from "@repo/core/diagnostics";
 import { currentManagedCommandTracking } from "./cloud/command-tracking";
 import Dockerode from "dockerode";
+import { gracefulStopBeforeRemoval, removeDockerContainer } from "./docker-container-removal";
+export { gracefulStopBeforeRemoval } from "./docker-container-removal";
 import { prepareDockerImage, type DockerImagePreparationOptions } from "./docker-image-preparation";
 import * as tarFs from "tar-fs";
 import { createHash, randomUUID } from "node:crypto";
@@ -877,22 +879,6 @@ export function inspectGpuConfig(
     if (gpu.gpus.length === 1) gpu.gpus = gpu.gpus[0];
   }
   return gpu;
-}
-
-/**
- * Stop before recreate/teardown, including when Compose omitted a grace period
- * (#986). Docker owns the default timeout, explicit zero/custom grace, and the
- * image's stop signal. Unexpected failures must prevent the caller's removal;
- * a failed stop is not permission to fall back to SIGKILL.
- */
-export async function gracefulStopBeforeRemoval(container: Dockerode.Container): Promise<void> {
-  try {
-    await container.stop();
-  } catch (error) {
-    if ((error as { statusCode?: number } | null)?.statusCode !== 304 && !isDockerNotFoundError(error)) {
-      throw error;
-    }
-  }
 }
 
 /**
@@ -4489,16 +4475,9 @@ export class DockerRuntime implements RuntimeAdapter {
       await removeManagedArtifact(null, containerId);
       return;
     }
-    const container = this.docker.getContainer(containerId);
-    try {
-      await gracefulStopBeforeRemoval(container);
-      await container.remove({ force: true });
-    } catch (err) {
-      // Idempotent: swallow "no such container" / 404 so partial-cleanup
-      // retries don't re-fail on already-deleted containers. Re-throw
-      // anything else (permission denied, daemon down, dependent state).
-      if (!isDockerNotFoundError(err)) throw err;
-    }
+    await removeDockerContainer(this.docker, containerId, {
+      assertAccess: (id) => this.assertContainerAccess(id),
+    });
   }
 
   /**
@@ -6231,15 +6210,13 @@ export class DockerRuntime implements RuntimeAdapter {
     // Flush the existing service before removing it, using Docker's normal
     // shutdown semantics even without an explicit Compose grace period.
     if (!config.previousContainerId) {
-      try {
-        const existing = this.docker.getContainer(containerName);
-        await this.assertContainerAccess(containerName);
-        await gracefulStopBeforeRemoval(existing);
-        await existing.remove({ force: true });
-      } catch (error) {
-        if (!isDockerNotFoundError(error)) throw error;
-      }
+      await this.assertContainerAccess(containerName);
+      await removeDockerContainer(this.docker, containerName, {
+        signal: config.signal,
+        assertAccess: (id) => this.assertContainerAccess(id),
+      });
     }
+    config.signal?.throwIfAborted();
 
     // Environment variables. Inject PORT=<service port> (like the single-app
     // deploy path) so an app that binds `process.env.PORT` listens on the port
