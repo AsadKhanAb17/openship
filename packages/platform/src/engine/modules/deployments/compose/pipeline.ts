@@ -305,6 +305,7 @@ export async function executeComposePipeline(opts: ComposePipelineOpts): Promise
     refreshServiceIds,
     signal: opts.signal,
   });
+  ctx.buildDurationMs = composeBuild.durationMs;
 
   try {
     await opts.onBuildFinished?.();

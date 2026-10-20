@@ -46,6 +46,7 @@ const h = vi.hoisted(() => ({
   deletedUpdateStatuses: [] as string[],
   deleteUpdateStatusError: null as Error | null,
   finishedLogs: [] as unknown[][],
+  finishedDurations: [] as number[],
 }));
 
 vi.mock("@repo/db", () => ({
@@ -76,6 +77,7 @@ vi.mock("@repo/db", () => ({
       ) => {
         if (h.finishError) throw h.finishError;
         h.finishedLogs.push(logs ?? []);
+        h.finishedDurations.push(_durationMs);
       },
     },
     project: {
@@ -167,9 +169,25 @@ beforeEach(() => {
   h.deletedUpdateStatuses = [];
   h.deleteUpdateStatusError = null;
   h.finishedLogs = [];
+  h.finishedDurations = [];
 });
 
 describe("lifecycle: a rejected log payload cannot invert the outcome", () => {
+  it("keeps measured build time when a later deployment phase throws without a duration", async () => {
+    const ctx = ctxFor();
+    ctx.buildDurationMs = 194_000;
+    await reportPipelineError(ctx, "provider throttled during activation", loggerSpy().logger);
+    expect(h.statusWrites.at(-1)?.extra?.buildDurationMs).toBe(194_000);
+    expect(h.finishedDurations).toEqual([194_000]);
+  });
+  it("keeps persisted timing in recovery but honors an explicit zero for a skipped build", async () => {
+    const ctx = ctxFor();
+    ctx.dep.buildDurationMs = 194_000;
+    await onFailure(ctx, "provider unavailable");
+    expect(h.finishedDurations).toEqual([194_000]);
+    await onFailure(ctxFor(), "preflight failed", 0);
+    expect(h.finishedDurations).toEqual([194_000, 0]);
+  });
   it("activates a successful preview on its own project row (#195)", async () => {
     const ctx = ctxFor();
     ctx.project.id = "project-preview";

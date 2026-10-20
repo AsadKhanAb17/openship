@@ -1427,6 +1427,7 @@ async function executeBuildAndDeploy(
       );
     }
     const buildResult = reusedArtifact ?? preparedReleaseImage ?? (await buildFromSource());
+    ctx.buildDurationMs = buildResult.durationMs;
 
     // ONLY an artifact this deploy PRODUCED goes on the cleanup list. `provisioned`
     // exists so onFailure/onCancelled can reclaim a half-built image or build dir,

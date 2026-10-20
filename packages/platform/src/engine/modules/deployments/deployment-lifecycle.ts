@@ -90,6 +90,8 @@ export interface LifecycleContext {
   resourceEvidence?: readonly LogEntry[];
   /** Provisioned resources - set by the orchestrator as phases progress. */
   provisioned: { imageRef?: string };
+  /** Measured build work, retained when a later phase throws without a result. */
+  buildDurationMs?: number;
   /**
    * Set by the terminal hooks below the moment the DEPLOYMENT ROW carries its
    * outcome. The pipeline's outer catch reads it: anything thrown afterwards (a
@@ -534,6 +536,7 @@ export async function onFailure(
   errorMeta?: { errorCode?: string; errorDetails?: Record<string, unknown>; errorMessage?: string },
 ): Promise<void> {
   const { runtime, project, dep, buildSessionId, provisioned } = ctx;
+  durationMs ??= ctx.buildDurationMs ?? dep.buildDurationMs ?? 0;
   if (dep.roleHandover?.phase === "committing") {
     await protectRoleHandoverOutcome(ctx);
     return;
