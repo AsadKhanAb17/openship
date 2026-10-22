@@ -21,6 +21,7 @@ import { CloudStaticHosting } from "@/components/project-settings/CloudStaticHos
 import ServerRuntimePicker, { type ServerRuntimeSelection } from "./ServerRuntimePicker";
 import { RollbackBackupPanel } from "./RollbackBackupPanel";
 import { useI18n, interpolate } from "@/components/i18n-provider";
+import { resolveBuildLocation } from "@/components/import-project/deploy-target-label";
 
 // ─── Compact summary (shown when editing from step 2) ────────────────────────
 
@@ -82,8 +83,9 @@ export const DeployTargetSummary: React.FC<CompactSummaryProps> = ({
   const tierLabels = useResourceTierLabels();
   const target = targetLabels[deployTarget];
   // Remote builds run on the selected destination.
+  const buildsHere = resolveBuildLocation({ deployTarget, buildStrategy, runtimeMode }) === "local";
   const build =
-    buildStrategy === "local"
+    buildsHere
       ? buildLabels.local
       : deployTarget === "cloud"
         ? { label: t.deploy.summary.targetCloud, icon: <UiIcon name="cloud" className="size-4" /> }
@@ -99,7 +101,7 @@ export const DeployTargetSummary: React.FC<CompactSummaryProps> = ({
   // the two icons stacked + a `+` between them, instead of two
   // sections separated by an arrow. Most users have matching targets
   // (cloud-on-cloud, server-on-server), so this is the common case.
-  const buildDest = buildStrategy === "local" ? "local" : deployTarget;
+  const buildDest = buildsHere ? "local" : deployTarget;
   const sameDestination = showBuildStrategy && buildDest === deployTarget;
 
   // Right-hand chip on the summary — one at a time, by workload shape:
@@ -316,8 +318,13 @@ const DeployTargetStep: React.FC<DeployTargetStepProps> = ({ serverSelection, ru
       description: ts.build.remoteDesc,
     },
   ];
-  // Managed builds always execute on the selected server's adapter.
-  const visibleBuildOptions = !selfHosted || config.deployTarget === "cloud" ? [] : buildOptions;
+  // Managed builds always execute on the selected server's adapter, and a server
+  // Docker build only runs on the server's daemon, so "This Machine" is not offered.
+  const localBuildAvailable = resolveBuildLocation({ ...config, buildStrategy: "local" }) === "local";
+  const visibleBuildOptions =
+    !selfHosted || config.deployTarget === "cloud"
+      ? []
+      : buildOptions.filter((opt) => opt.value !== "local" || localBuildAvailable);
 
   // Clone-location picker (DOCKER server deploys, incl. services). Bare always
   // clones on the target, so it keeps the credential-forwarding checkbox below

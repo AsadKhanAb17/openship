@@ -31,14 +31,30 @@ export function describeBuildTarget(
   return "—";
 }
 
+/**
+ * Where the build actually runs. For a server deploy only the bare runtime builds
+ * on this machine; a Docker image is always built by the server's daemon (#535),
+ * and a "local" pick there only moves where the source is cloned. Every build
+ * location label and the build picker must ask here, or the UI promises a local
+ * build while the server does the work (#957).
+ */
+export function resolveBuildLocation(config: {
+  deployTarget: string;
+  buildStrategy: string;
+  runtimeMode?: string;
+}): "local" | "target" {
+  if (config.buildStrategy !== "local") return "target";
+  return config.deployTarget === "server" && config.runtimeMode !== "bare" ? "target" : "local";
+}
+
 /** Where the build runs (vs where it deploys, shown by the target above).
  *  Concise so it fits the narrow info column without truncating. */
 export function describeBuildStrategy(
-  config: { deployTarget: string; buildStrategy: string },
+  config: { deployTarget: string; buildStrategy: string; runtimeMode?: string },
   t: Dictionary,
 ): string {
   const dp = t.importProject.deploymentProcessing;
-  if (config.buildStrategy === "local") return dp.strategyLocal;
+  if (resolveBuildLocation(config) === "local") return dp.strategyLocal;
   if (config.deployTarget === "cloud") return dp.strategyCloud;
   if (config.deployTarget === "cluster") return "Cluster build server";
   if (config.deployTarget === "server") return dp.strategyServer;
