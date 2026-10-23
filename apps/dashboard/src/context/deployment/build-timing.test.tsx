@@ -8,8 +8,11 @@ import DeploymentDetails from "@/components/import-project/DeploymentDetails";
 import { baseDictionary } from "@/i18n";
 import { ApiError } from "@/lib/api/client";
 import { useDeploymentBuild } from "./useDeploymentBuild";
+import { monorepoAppFromScan } from "./monorepo-config";
+import { getModeSwitchUpdates } from "./mode-config";
 import {
   DEFAULT_CONFIG,
+  createPublicEndpoint,
   INITIAL_STATE,
   resolveBuildElapsedMs,
   type DeploymentContextType,
@@ -305,6 +308,107 @@ describe("workflow rules in the shared deployment wizard", () => {
     expect(api.ensure).not.toHaveBeenCalled();
     expect(api.buildAccess).not.toHaveBeenCalled();
   });
+});
+
+describe("monorepo routing at deployment submission", () => {
+  it.each([
+    ["cloud", "single", false],
+    ["cloud", "single", true],
+    ["cloud", "services", false],
+    ["server", "single", false],
+    ["server", "single", true],
+    ["server", "services", false],
+  ] as const)(
+    "keeps %s %s routing and private=%s through both API requests",
+    async (deployTarget, mode, privateApp) => {
+      const app = monorepoAppFromScan(
+        {
+          id: "apps/web",
+          name: "web",
+          rootDirectory: "apps/web",
+          stack: "node",
+          category: "backend",
+          packageManager: "npm",
+          buildImage: "node:22",
+          installCommand: "npm ci",
+          buildCommand: "",
+          startCommand: "node server.js",
+          outputDirectory: "",
+          productionPaths: [],
+          port: 3000,
+          enabled: true,
+          publicEndpoints: [{ port: 3000, customDomain: "web.example.com", domainType: "custom" }],
+        },
+        "repo",
+        "custom",
+      );
+      const multi: DeploymentConfig = {
+        ...DEFAULT_CONFIG,
+        owner: "acme",
+        repo: "repo",
+        branch: "main",
+        projectName: "repo",
+        projectType: "monorepo",
+        serviceDeploymentMode: "services",
+        deployTarget,
+        serverId: "target",
+        monorepoApps: [app],
+        publicEndpoints: [],
+      };
+      const config =
+        mode === "single"
+          ? {
+              ...multi,
+              ...getModeSwitchUpdates(multi, "single"),
+              noPublicRoute: privateApp,
+              // The single app has its own edited commands; inactive per-app choices
+              // must not block it or contribute routes.
+              monorepoApps: [{ ...app, enabled: false }],
+              publicEndpoints: [
+                createPublicEndpoint({
+                  port: "3000",
+                  customDomain: "single.example.com",
+                  domainType: "custom",
+                }),
+              ],
+            }
+          : multi;
+      api.ensure.mockResolvedValue({ success: true, project_id: "draft", created: true });
+      api.buildAccess.mockResolvedValue({
+        success: true,
+        project_id: "draft",
+        deployment_id: "deployment",
+      });
+      await mount(config);
+      await act(async () => {
+        expect(await build.startDeployment()).toBe("deployment");
+      });
+      const ensured = api.ensure.mock.calls[0]![0];
+      const request = api.buildAccess.mock.calls[0]![0];
+      expect(request).toMatchObject({
+        deployTarget,
+        serverId: "target",
+        serviceDeploymentMode: mode,
+      });
+      if (mode === "services") {
+        expect(ensured.publicEndpoints).toBeUndefined();
+        expect(request.publicEndpoints).toBeUndefined();
+        expect(ensured.monorepoApps[0].publicEndpoints).toEqual([
+          expect.objectContaining({ customDomain: "web.example.com", port: 3000 }),
+        ]);
+      } else if (privateApp) {
+        expect(ensured.publicEndpoints).toEqual([]);
+        expect(request.publicEndpoints).toEqual([]);
+      } else {
+        expect(ensured.publicEndpoints).toEqual([
+          expect.objectContaining({ customDomain: "single.example.com", port: 3000 }),
+        ]);
+        expect(request.publicEndpoints).toEqual([
+          expect.objectContaining({ customDomain: "single.example.com", port: "3000" }),
+        ]);
+      }
+    },
+  );
 });
 
 describe("deployment counter (#919)", () => {

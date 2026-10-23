@@ -16,18 +16,20 @@ const h = vi.hoisted(() => ({
   builds: vi.fn(),
   audit: vi.fn(),
   available: vi.fn(),
+  services: vi.fn(async () => [] as Array<{ enabled: boolean }>),
   protection: vi.fn(),
   runtime: vi.fn(),
   serviceRows: vi.fn(),
+  clusterRuntime: vi.fn(),
 }));
 vi.mock("@repo/db", () => ({
   repos: {
     routeProtection: { list: h.protection },
     project: { findById: h.find },
     deployment: { findLatestByProject: h.latest },
-    clusterRuntime: { bindProject: h.bind },
+    clusterRuntime: { bindProject: h.bind, get: h.clusterRuntime },
     clusterDatabase: { list: vi.fn(async () => []) },
-    service: { listByProject: vi.fn(async () => []), listByDeployment: h.serviceRows },
+    service: { listByProject: h.services, listByDeployment: h.serviceRows },
   },
 }));
 vi.mock("@repo/platform/engine/lib/active-deployment", () => ({ findActiveDeployment: h.active }));
@@ -72,6 +74,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   h.find.mockResolvedValue(project());
   h.protection.mockResolvedValue([]);
+  h.services.mockResolvedValue([]);
+  h.clusterRuntime.mockResolvedValue({ provider: "k3s" });
   h.lock.mockImplementation(async (_id, work) => work(await h.find()));
   h.active.mockResolvedValue({ id: "release", meta: { clusterId: "cluster" } });
   h.ready.mockResolvedValue({
@@ -119,6 +123,35 @@ describe("project cluster lifecycle admission", () => {
       expect(h.trigger).not.toHaveBeenCalled();
     },
   );
+  it("reports unsupported service environments without mutating their destination", async () => {
+    h.services.mockResolvedValue([{ enabled: true }]);
+    const result = await operations.getClusterWorkload(ctx, "project");
+    expect(result.unavailableReason).toContain("Per-service replication");
+    expect(h.bind).not.toHaveBeenCalled();
+    expect(h.trigger).not.toHaveBeenCalled();
+  });
+  it("keeps existing Swarm service scaling available while Kubernetes service scaling remains blocked", async () => {
+    h.services.mockResolvedValue([{ enabled: true }]);
+    h.clusterRuntime.mockResolvedValue({ provider: "swarm" });
+    expect((await operations.getClusterWorkload(ctx, "project")).unavailableReason).toBeNull();
+    h.clusterRuntime.mockResolvedValue({ provider: "k3s" });
+    expect((await operations.getClusterWorkload(ctx, "project")).unavailableReason).toContain(
+      "Per-service replication",
+    );
+    expect(h.bind).not.toHaveBeenCalled();
+    expect(h.trigger).not.toHaveBeenCalled();
+  });
+  it("recognizes database images in generic Docker projects before offering replicas", async () => {
+    h.find.mockResolvedValue({
+      ...project(),
+      framework: "docker",
+      releaseSource: { mode: "url", artifactKind: "image", imageTemplate: "redis:7" },
+    });
+    expect((await operations.getClusterWorkload(ctx, "project")).unavailableReason).toContain(
+      "Database replication",
+    );
+    expect(h.bind).not.toHaveBeenCalled();
+  });
   it("aggregates a Compose release without treating total tasks as the per-service replica setting", async () => {
     h.active.mockResolvedValue({
       id: "release",
@@ -283,21 +316,29 @@ describe("Swarm target admission", () => {
     });
     expect(h.bind).not.toHaveBeenCalled();
   });
-  it.each(["ready", "failed", "cancelled"])("requires migration for a previously deployed project (%s), even without an active pointer", async (status) => {
-    h.find.mockResolvedValue({ ...project(), clusterId: null, activeDeploymentId: null });
-    h.latest.mockResolvedValue({ id: "existing", status, containerId: "docker-container" });
-    await expect(operations.setClusterTarget(ctx, "project", input)).rejects.toMatchObject({
-      code: "CLUSTER_MIGRATION_REQUIRED",
-    });
-    expect(h.bind).not.toHaveBeenCalled();
-    expect(h.trigger).not.toHaveBeenCalled();
-  });
+  it.each(["ready", "failed", "cancelled"])(
+    "requires migration for a previously deployed project (%s), even without an active pointer",
+    async (status) => {
+      h.find.mockResolvedValue({ ...project(), clusterId: null, activeDeploymentId: null });
+      h.latest.mockResolvedValue({ id: "existing", status, containerId: "docker-container" });
+      await expect(operations.setClusterTarget(ctx, "project", input)).rejects.toMatchObject({
+        code: "CLUSTER_MIGRATION_REQUIRED",
+      });
+      expect(h.bind).not.toHaveBeenCalled();
+      expect(h.trigger).not.toHaveBeenCalled();
+    },
+  );
   it("keeps replica edits on the already-selected Swarm available", async () => {
     h.find.mockResolvedValue({ ...project(), clusterId: "swarm" });
     h.latest.mockResolvedValue({ id: "existing", status: "ready" });
     await operations.setClusterTarget(ctx, "project", { ...input, config: { replicas: 3 } });
     expect(h.latest).not.toHaveBeenCalled();
-    expect(h.bind).toHaveBeenCalledWith("org", "project", "swarm", { replicas: 3 }, now.toISOString());
+    expect(h.bind).toHaveBeenCalledWith(
+      "org",
+      "project",
+      "swarm",
+      { replicas: 3 },
+      now.toISOString(),
+    );
   });
-
 });

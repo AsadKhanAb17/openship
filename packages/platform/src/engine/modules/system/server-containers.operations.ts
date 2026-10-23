@@ -91,18 +91,18 @@ export const serverContainerStreams: NonNullable<ServerDependencies["containers"
 };
 
 async function groupedContainers(organizationId: string) {
-  const [servers, rows, projectCounts] = await Promise.all([
+  const [servers, rows, projectCounts, routedCounts] = await Promise.all([
     infrastructureServers(organizationId),
     repos.serverContainerStatus.listByOrg(organizationId),
     repos.project.countActiveByServer(organizationId),
+    repos.project.countActiveByServer(organizationId, { withRoutes: true }),
   ]);
   const byServer = new Map<string, typeof rows>();
   for (const r of rows) {
     (byServer.get(r.serverId) ?? byServer.set(r.serverId, []).get(r.serverId)!).push(r);
   }
-  // projectCount rides along so the view can tell an ABSENT edge that's a real
-  // issue (this box hosts projects) from one that's just an offer — the same
-  // rule containerIssues uses — without a second round-trip.
+  // Keep workload counts separate from whether those workloads need routing.
+  // Fleet and detail views share the missing-edge policy with containerIssues.
   return servers.map((s) => ({
     server: {
       id: s.id,
@@ -110,6 +110,7 @@ async function groupedContainers(organizationId: string) {
       sshHost: s.sshHost,
       isLocal: s.isLocal,
       projectCount: projectCounts[s.id] ?? 0,
+      edgeRequired: (routedCounts[s.id] ?? 0) > 0,
     },
     components: byServer.get(s.id) ?? [],
   }));

@@ -6,6 +6,7 @@ import {
   resolveProjectVolumes,
   safeErrorMessage,
   validateClusterWorkload,
+  clusterWorkloadUnsupportedReason,
   type ClusterWorkloadStatus,
 } from "@repo/core";
 import { kubernetesProjectNamespace } from "@repo/adapters";
@@ -38,9 +39,23 @@ export function createProjectClusterOperations(
     const project = await repos.project.findById(id);
     assertResourceInOrg(project, "Project", ctx.organizationId, id);
     const services = (await repos.service.listByProject(id)).filter((service) => service.enabled);
+    const selectedRuntime = project.clusterId
+      ? await repos.clusterRuntime.get(ctx.organizationId, project.clusterId)
+      : null;
     const active = await findActiveDeployment(project);
     const meta = active?.meta as DeploymentMeta | null;
     const result: ProjectCluster = {
+      unavailableReason:
+        project.appTemplateId === "openship"
+          ? "The OpenShip control plane cannot be replicated through application scaling."
+          : clusterWorkloadUnsupportedReason({
+              provider: selectedRuntime?.provider,
+              workload: projectToClass(project).workload,
+              framework: project.framework,
+              image: project.releaseSource?.imageTemplate,
+              volumes: resolveProjectVolumes(project.volumes, project.framework),
+              services,
+            }),
       clusterId: project.clusterId,
       serverId: project.serverId,
       config: project.clusterConfig,
@@ -180,7 +195,7 @@ export function createProjectClusterOperations(
             services: (await repos.service.listByProject(id)).filter((service) => service.enabled),
             image:
               project.releaseSource && releaseArtifactKind(project.releaseSource) === "image"
-                ? "prebuilt"
+                ? (project.releaseSource.imageTemplate ?? "prebuilt")
                 : undefined,
             imageRepository: input.config.imageRepository,
           });

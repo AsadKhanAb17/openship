@@ -343,6 +343,8 @@ function allocatePinnedHostPort(input: {
 import { repos, type Deployment } from "@repo/db";
 import { ensurePortAvailable, isMultiServiceRuntime } from "@repo/adapters";
 import { firePreDeployBackups } from "@repo/platform/engine/modules/backups/triggers/pre-deploy";
+import { ensureEdgeChallengeReady } from "@repo/platform/engine/lib/edge-challenge";
+import { repairEdgeVhosts } from "@repo/platform/engine/lib/edge-vhost-repair";
 import { executeComposePipeline, resolveProjectServicePreflightServices, shouldUseProjectServicePipeline } from "@repo/platform/engine/modules/deployments/compose/index";
 import { CloudBuildAdmissionDeferredError, releaseCloudBuildSlot, runOutsideCloudBuildActivity } from "@repo/platform/engine/lib/cloud-build-activity";
 import { AppError } from "@repo/core";
@@ -1467,7 +1469,12 @@ describe("single-app prebuilt release-image pipeline", () => {
     }
   });
 
-  it("inventories migrated edge routes before reserving a loopback host port", async () => {
+  it.each([false, true])("inventories loopback claims with routed=%s, preparing edge only for routes", async (routed) => {
+    vi.mocked(buildProjectRouteDomains).mockReturnValueOnce(routed ? [{
+      hostname: "app.example.com", tls: false, provisionSsl: false,
+      requiresSslTooling: false, terminatesTlsLocally: false, isCloud: false,
+      targetPort: 8080,
+    }] : []);
     mocks.runDeployPipeline.mockImplementationOnce(async (env, input) => {
       await env.preflight(input.config, async () => "migrate");
       const result = await env.activate(input.config, () => undefined);
@@ -1481,12 +1488,16 @@ describe("single-app prebuilt release-image pipeline", () => {
     await run(deployment(), { routeStrategy: "loopback-port" });
     await vi.waitFor(() => expect(mocks.onSuccess).toHaveBeenCalledTimes(1));
 
-    expect(mocks.ensureRoutingReady).toHaveBeenCalledTimes(1);
+    expect(mocks.ensureRoutingReady).toHaveBeenCalledTimes(routed ? 1 : 0);
+    expect(ensureEdgeChallengeReady).toHaveBeenCalledTimes(routed ? 1 : 0);
+    expect(repairEdgeVhosts).toHaveBeenCalledTimes(routed ? 1 : 0);
     expect(mocks.prepareTargetPinnedHostPorts).toHaveBeenCalledTimes(1);
     expect(mocks.allocateAndReservePinnedHostPort).toHaveBeenCalledTimes(1);
-    expect(mocks.ensureRoutingReady.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.prepareTargetPinnedHostPorts.mock.invocationCallOrder[0]!,
-    );
+    if (routed) {
+      expect(mocks.ensureRoutingReady.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.prepareTargetPinnedHostPorts.mock.invocationCallOrder[0]!,
+      );
+    }
     expect(mocks.prepareTargetPinnedHostPorts.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.allocateAndReservePinnedHostPort.mock.invocationCallOrder[0]!,
     );

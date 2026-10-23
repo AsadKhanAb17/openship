@@ -322,6 +322,11 @@ export interface DeploymentConfigSnapshot {
   adopt?: boolean;
   /** Project services fan-out mode captured for this deployment. */
   serviceDeploymentMode?: "services" | "single";
+  /** Derived by the worker before infrastructure reconciliation; automatic
+   * application failure/recovery must not destroy these independent services. */
+  attachedInfrastructureServiceIds?: string[];
+  /** Canonical app identity shared by artifact admission and the service snapshot. */
+  primaryAppServiceName?: string;
   /**
    * Deployable services captured at deploy request time. Mixed shape:
    * compose-source rows AND monorepo sub-app rows travel through the
@@ -1019,9 +1024,10 @@ async function resolveLifecycleSourceEnv(
  * this helper because resolveServicePipelineMode returns false for it. */
 function freezeResolvedServicePipeline(
   snapshot: DeploymentConfigSnapshot,
-  resolved: { useServicePipeline: boolean; servicePreflightServices: DeployableService[] },
+  resolved: { useServicePipeline: boolean; servicePreflightServices: DeployableService[]; primaryApp?: { app: { name: string } } },
 ): void {
-  if (!resolved.useServicePipeline) return;
+  snapshot.primaryAppServiceName = resolved.primaryApp?.app.name;
+  if (!resolved.useServicePipeline && !resolved.primaryApp) return;
   snapshot.serviceDeploymentMode ??= "services";
   if (!snapshot.composeServices?.length && resolved.servicePreflightServices.length > 0) {
     snapshot.composeServices = resolved.servicePreflightServices;
@@ -2075,17 +2081,15 @@ export async function requestBuildAccess(
         );
     }
   }
-  const { useServicePipeline, servicePreflightServices } = await resolveServicePipelineMode(
+  // Classify against the resolved destination so an explicit Cloud/cluster
+  // choice cannot be mistaken for a self-hosted primary app.
+  Object.assign(snapshot, resolvedTarget);
+  const serviceMode = await resolveServicePipelineMode(
     project,
     snapshot,
   );
-  freezeResolvedServicePipeline(snapshot, { useServicePipeline, servicePreflightServices });
-
-  // Resolve the snapshot's target (deployTarget + serverId + runtimeMode) from
-  // the single source of truth shared with triggerDeployment — UI override >
-  // workspaceId > active-deployment meta. Keeps the two deploy entry points
-  // from diverging on where a project deploys.
-  Object.assign(snapshot, resolvedTarget);
+  const { useServicePipeline, servicePreflightServices } = serviceMode;
+  freezeResolvedServicePipeline(snapshot, serviceMode);
 
   // Keep the validated upload capability with the snapshot. Cloud transfers
   // only the session's source; a persisted path alone grants no filesystem access.
@@ -2945,11 +2949,12 @@ export async function triggerDeployment(ctx: RequestContext, data: DeploymentTri
     );
   }
 
-  const { useServicePipeline, servicePreflightServices } = await resolveServicePipelineMode(
+  const serviceMode = await resolveServicePipelineMode(
     project,
     snapshot,
   );
-  freezeResolvedServicePipeline(snapshot, { useServicePipeline, servicePreflightServices });
+  const { useServicePipeline, servicePreflightServices } = serviceMode;
+  freezeResolvedServicePipeline(snapshot, serviceMode);
 
   // Resolve once, before preflight: a single-app refresh is a pinned-artifact
   // deploy, so preflight and git-token resolution must both see that it needs no
@@ -3100,6 +3105,21 @@ export async function triggerDeployment(ctx: RequestContext, data: DeploymentTri
     // single-app pipeline without turning an empty subset into "build all".
     finalServiceIds = target.length > 0 ? target : undefined;
     refreshServiceIds = target.length > 0 ? target : undefined;
+  }
+
+  // Changed-file routing may name the inherited app's service row. That is a
+  // normal application release, not a general Compose service action: retain
+  // the release/role engine and let it carry unchanged infrastructure. Exact
+  // hooks and explicit manual service selections retain their requested scope.
+  if (
+    !data.refresh && !reuse && serviceMode.primaryApp &&
+    finalServiceIds?.includes(serviceMode.primaryApp.app.id) &&
+    ((data.smartRoute && !data.serviceIds?.length) ||
+      (data.trigger === "webhook" && !data.strictServiceScope))
+  ) {
+    finalForceAll = true;
+    finalServiceIds = undefined;
+    refreshServiceIds = undefined;
   }
 
   const dep = await createQueuedDeployment({

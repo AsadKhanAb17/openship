@@ -158,9 +158,12 @@ async function getServer(ctx: ExecutionContext, id: string) {
   const projectCounts = await repos.project
     .countActiveByServer(ctx.organizationId)
     .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/system/server.operations"); return ({}) as Record<string, number>; });
+  const routedCounts = await repos.project.countActiveByServer(ctx.organizationId, { withRoutes: true })
+    .catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/system/server.operations"); return null; });
   return {
     ...serializeServer(server, cloud, server.workspaceId ? null : await probeServerCapacity(server.id, ctx.organizationId)),
     projectCount: cloud?.projectCount ?? projectCounts[id] ?? 0,
+    ...(routedCounts ? { edgeRequired: (routedCounts[id] ?? 0) > 0 } : {}),
     hostChannel: server.isLocal ? await localServerHostChannel(server.id).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/system/server.operations"); return null; }) : null,
   };
 }

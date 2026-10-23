@@ -141,6 +141,11 @@ const PublicEndpointSchema = Type.Object({
  * empty one rather than fall back to repo root by accident.
  */
 const MonorepoAppSchema = Type.Object({
+  publicEndpoints: Type.Optional(
+    Type.Array(Type.Pick(PublicEndpointSchema, ["port", "domain", "customDomain", "domainType"]), {
+      maxItems: 50,
+    }),
+  ),
   name: Type.String({ minLength: 1, maxLength: 100 }),
   // Spread first, then override rootDirectory to required. The shared
   // block has it Optional to match the DB column; this create payload

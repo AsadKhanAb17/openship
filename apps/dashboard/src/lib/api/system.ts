@@ -272,9 +272,10 @@ export interface ServerContainerGroup {
     name: string;
     sshHost: string;
     isLocal: boolean;
-    /** Projects with an active deployment on this server — an absent edge is an
-     *  issue (not just an offer) only when this is > 0. */
+    /** All projects actively deployed on this server. */
     projectCount: number;
+    /** Whether its deployed projects need edge routing. Absent on older APIs. */
+    edgeRequired?: boolean;
   };
   components: ServerContainerStatus[];
 }

@@ -543,6 +543,32 @@ describe("deployment preparation HTTP/native parity", () => {
     expect(h.audit).not.toHaveBeenCalled();
   });
 
+  it("checks a selected native folder against sourceRoots before scanning through either entry point", async () => {
+    vi.stubEnv("OPENSHIP_NATIVE", "true");
+    const directory = await mkdtemp(join(tmpdir(), "prepare-selected-root-"));
+    try {
+      const root = join(await realpath(directory), "source");
+      await mkdir(join(root, "app"), { recursive: true });
+      await symlink(directory, join(root, "outside"));
+      const local = await native();
+      configureNativeSourceRoots([root]);
+      for (const deployments of [local.deployments, remote().deployments]) {
+        h.localInfo.mockClear();
+        await expect(
+          deployments.prepare({ source: "local", path: root, rootDirectory: "outside" }),
+        ).rejects.toMatchObject({ code: "SOURCE_PATH_NOT_ALLOWED", statusCode: 403 });
+        expect(h.localInfo).not.toHaveBeenCalled();
+        await deployments.prepare({ source: "local", path: root, rootDirectory: "app" });
+        expect(h.localInfo).toHaveBeenCalledWith(
+          expect.objectContaining({ path: root, rootDirectory: "app" }),
+        );
+      }
+    } finally {
+      configureNativeSourceRoots([]);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("returns editable source values in one authorized HTTP or native preparation", async () => {
     info.services!.push({
       name: "db", image: "postgres:16", ports: [], dependsOn: [], volumes: [],

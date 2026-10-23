@@ -58,7 +58,7 @@ export interface RestorePlanUI {
   reason?: string;
 }
 
-export type PrepareProjectSource = { includeEnv?: boolean } & (
+export type PrepareProjectSource = { includeEnv?: boolean; rootDirectory?: string } & (
   | {
       source?: "github";
       owner: string;
@@ -132,6 +132,16 @@ export type PrepareSingleAppCandidate = PrepareAppConfig;
 
 /** One deployable sub-app discovered inside a monorepo. */
 export interface PrepareMonorepoApp {
+  suggested?: boolean;
+  enabled?: boolean;
+  exposed?: boolean;
+  environment?: Record<string, string>;
+  publicEndpoints?: Array<{
+    port?: number;
+    domain?: string;
+    customDomain?: string;
+    domainType?: string;
+  }>;
   id: string;
   name: string;
   rootDirectory: string;

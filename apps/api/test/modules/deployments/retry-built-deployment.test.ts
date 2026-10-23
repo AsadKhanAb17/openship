@@ -138,6 +138,32 @@ describe("retry a completed build through the normal pipeline", () => {
     });
   });
 
+  it("retries a primary app image without source or restricting its attached services to app scope", async () => {
+    const target = attempt();
+    target.meta = {
+      ...(target.meta as object),
+      serviceDeploymentMode: "services",
+      primaryAppServiceName: "app",
+      composeServices: [
+        { kind: "monorepo", name: "app" },
+        { kind: "compose", name: "db", image: "postgres:16" },
+      ],
+      releaseCommands: ["run-migrations"],
+      roles: [{ name: "queue", kind: "worker", command: "run-queue", replicas: 1 }],
+    };
+    await retryBuiltDeployment(ctx, target, project);
+    const command = h.trigger.mock.calls[0]![1];
+    expect(command.serviceIds).toBeUndefined();
+    expect(command.reuseSnapshot.meta).toMatchObject({
+      primaryAppServiceName: "app",
+      handoverAppImage: imageId,
+      refreshAppDeploymentId: target.id,
+      releaseCommands: ["run-migrations"],
+      roles: [{ name: "queue", kind: "worker", command: "run-queue", replicas: 1 }],
+    });
+    expect(command.reuseSnapshot.meta.handoverImages).toBeUndefined();
+  });
+
   it.each(["cancelled", "ready", "partial_failure", "building"])(
     "refuses %s attempts",
     async (status) => {

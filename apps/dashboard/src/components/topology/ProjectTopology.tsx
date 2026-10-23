@@ -33,6 +33,7 @@ import { randomUUID } from "@/lib/random-uuid";
 import {
   buildProjectTopology,
   addClusterDatabases,
+  expandDatabaseReplicas,
   addClusterVolumes,
   volumeNodeId,
   buildDatabaseReplicaTopology,
@@ -110,6 +111,7 @@ export default function ProjectTopology({
     "overview",
   );
   const [instanceServiceId, setInstanceServiceId] = useState<string | null>(null);
+  const [showReplicas, setShowReplicas] = useState(true);
   const [adding, setAdding] = useState(false);
   const [addKind, setAddKind] = useState<"database" | "volume" | "service" | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -230,13 +232,17 @@ export default function ProjectTopology({
     volumes.volumes,
   ]);
 
+  const overviewGraph = useMemo(
+    () => expandDatabaseReplicas(fullGraph, project),
+    [fullGraph, project],
+  );
   const instanceService = fullGraph.nodes.find(
     (node) =>
       (node.serviceId === instanceServiceId && node.kind === "service") ||
       (node.id === instanceServiceId && (node.kind === "application" || node.kind === "database")),
   );
   const graph = useMemo<ProjectTopologyGraph>(() => {
-    if (!instanceServiceId) return fullGraph;
+    if (!instanceServiceId) return showReplicas ? overviewGraph : fullGraph;
     if (instanceService?.database)
       return buildDatabaseReplicaTopology(project, instanceService.database);
     if (instanceService?.replicaStatus)
@@ -253,7 +259,7 @@ export default function ProjectTopology({
       ],
       edges: [],
     };
-  }, [fullGraph, instanceService, instanceServiceId, project]);
+  }, [fullGraph, overviewGraph, instanceService, instanceServiceId, project, showReplicas]);
   const resource =
     selection?.kind === "node" ? graph.nodes.find((node) => node.id === selection.id) : undefined;
   const relation =
@@ -733,18 +739,35 @@ export default function ProjectTopology({
                 <UiIcon name="refresh" className={runtime.loading ? "animate-spin" : ""} />
               </Button>
               {!instanceServiceId && (
-                <Button
-                  className="topology-add-service h-8 px-3 text-xs"
-                  disabled={busy || hasSavedChanges || !!servicesData.error}
-                  onClick={() => {
-                    setSelection(null);
-                    setAddKind(null);
-                    setAdding(true);
-                  }}
-                >
-                  <UiIcon name="plus" />
-                  {resourcePicker ? "Add resource" : "Add service"}
-                </Button>
+                <>
+                  {overviewGraph.nodes.some((node) => node.replicaGroup) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-pressed={showReplicas}
+                      aria-label="Show database replicas"
+                      onClick={() => {
+                        setSelection(null);
+                        setShowReplicas((current) => !current);
+                      }}
+                    >
+                      <UiIcon name="layers" />
+                      {showReplicas ? "Group replicas" : "Show replicas"}
+                    </Button>
+                  )}
+                  <Button
+                    className="topology-add-service h-8 px-3 text-xs"
+                    disabled={busy || hasSavedChanges || !!servicesData.error}
+                    onClick={() => {
+                      setSelection(null);
+                      setAddKind(null);
+                      setAdding(true);
+                    }}
+                  >
+                    <UiIcon name="plus" />
+                    {resourcePicker ? "Add resource" : "Add service"}
+                  </Button>
+                </>
               )}
               <DropdownMenu
                 actions={topologyActions}
@@ -788,8 +811,8 @@ export default function ProjectTopology({
           <div className="absolute inset-0">
             {runtime.ready ? (
               <TopologyCanvas
-                key={instanceServiceId ?? "overview"}
-                layoutKey={`openship:topology-layout:v1:${id}:${instanceServiceId ?? "overview"}`}
+                key={instanceServiceId ?? (showReplicas ? "overview-replicas" : "overview")}
+                layoutKey={`openship:topology-layout:v1:${id}:${instanceServiceId ?? (showReplicas ? "overview-replicas" : "overview")}`}
                 graph={graph}
                 selection={selection}
                 fullscreen={fullscreen}

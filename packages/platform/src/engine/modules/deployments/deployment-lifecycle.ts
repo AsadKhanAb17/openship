@@ -20,6 +20,7 @@ import {
   type Deployment,
   type NewDeployment,
   type ServiceDeployment,
+  type Service,
 } from "@repo/db";
 import { DockerRuntime, isEdgeDownMessage, type BuildLogger, type LogEntry } from "@repo/adapters";
 import type { RuntimeAdapter } from "@repo/adapters";
@@ -179,6 +180,17 @@ export function collectLogs(ctx: LifecycleContext): LogEntry[] {
   }
 }
 
+/** Only canonical project service rows can match a worker-derived keep list. */
+async function attachedInfrastructureIds(dep: Deployment, services?: Service[]): Promise<Set<string>> {
+  const declared = (dep.meta as { attachedInfrastructureServiceIds?: unknown } | null)?.attachedInfrastructureServiceIds;
+  if (!Array.isArray(declared) || declared.length === 0) return new Set();
+  const rows = services ?? await repos.service.listByProject(dep.projectId);
+  return new Set(rows.filter(service =>
+    declared.includes(service.id) && service.projectId === dep.projectId &&
+    service.kind === "compose" && service.image && !service.build,
+  ).map(service => service.id));
+}
+
 /**
  * Destroy only service containers this attempt actually owns.
  *
@@ -209,13 +221,24 @@ async function cleanupOwnedServiceContainers(
     return serviceDeps;
   }
 
+  // This policy is durable: crash recovery reconstructs ctx from the deployment
+  // row, so a process-local keep list would lose a ready database on restart.
+  let retainedInfrastructure: Set<string>;
+  try {
+    retainedInfrastructure = await attachedInfrastructureIds(ctx.dep);
+  } catch (error) {
+    errorDiagnostics.error("platform/engine/modules/deployments/deployment-lifecycle",
+      "Could not verify independent infrastructure ownership; automatic container cleanup deferred.", error);
+    return serviceDeps;
+  }
   for (const serviceDep of serviceDeps) {
     const containerId = serviceDep.containerId;
     if (!containerId) continue;
-    if (protectedContainers.has(containerId)) {
+    if (protectedContainers.has(containerId) ||
+      serviceDep.status === "success" && retainedInfrastructure.has(serviceDep.serviceId)) {
       console.log(
         `[DEPLOY] ${ctx.dep.id}: keeping service container ${containerId.slice(0, 12)} — ` +
-          `it belongs to the live release`,
+          `it belongs to a live release or independently managed infrastructure`,
       );
       continue;
     }
@@ -790,12 +813,14 @@ export async function onCancelled(
     serviceDeps.length > 0 ? await repos.service.listByProject(dep.projectId).catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/deployments/deployment-lifecycle"); return []; }) : [];
   const serviceNameMap = new Map(services.map((s) => [s.id, s.name]));
 
+  const retainedInfrastructure = await attachedInfrastructureIds(dep, services);
   for (const serviceDep of serviceDeps) {
+    const retained = serviceDep.status === "success" && retainedInfrastructure.has(serviceDep.serviceId);
     sessionManager.broadcastServiceStatus(dep.id, {
       serviceName: serviceNameMap.get(serviceDep.serviceId) ?? serviceDep.serviceId,
       serviceId: serviceDep.serviceId,
-      status: "failed",
-      error: "Deployment cancelled",
+      status: retained ? "running" : "failed",
+      ...(retained ? { containerId: serviceDep.containerId ?? undefined } : { error: "Deployment cancelled" }),
     });
   }
 

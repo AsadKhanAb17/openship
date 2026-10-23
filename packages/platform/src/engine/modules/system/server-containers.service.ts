@@ -821,7 +821,7 @@ interface IssueRow {
  * the cached rows + the active-deployment→server project attribution.
  *
  * An edge is an issue when it's `down` (installed, not running) or ABSENT on a box
- * that actually hosts projects (projectCounts > 0) — absent on an empty box is an
+ * that hosts routed projects (projectCounts > 0) — absent on an empty box is an
  * offer, not an alarm. A mail engine is an issue only when a TRACKED row says it's
  * down: mail is optional per box, so no row means no mail here (never an alarm),
  * but a provisioned engine that stopped means mail isn't being delivered.
@@ -891,7 +891,7 @@ export async function loadOrgContainerIssues(
   const [servers, rows, projectCounts] = await Promise.all([
     infrastructureServers(organizationId),
     repos.serverContainerStatus.listByOrg(organizationId),
-    repos.project.countActiveByServer(organizationId),
+    repos.project.countActiveByServer(organizationId, { withRoutes: true }),
   ]);
   return classifyContainerIssues(servers, rows, projectCounts);
 }

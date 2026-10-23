@@ -33,6 +33,16 @@ glance:
 Click any row to open that service's full screen. Repo updates preserve your explicit edits and apply
 other changes automatically — see [how Compose changes merge](#when-the-repo-and-your-edits-disagree-drift).
 
+### Private services on a server with another proxy
+
+A stack with no domains or public routes can run without Openship's edge. Private services with no
+host publish, or an explicit mapping such as `127.0.0.1:25774:25774`, do not prompt to take over an
+existing reverse proxy. Missing-edge warnings only apply to deployed projects with configured routes.
+
+Automatically selected host ports still require a readable route inventory to prevent capturing a port
+another hostname uses. That safety check remains strict; an unavailable inventory does not authorize
+replacing your proxy. Use an explicit host mapping for a private service when you manage that boundary.
+
 ## How services get into a stack
 
 There are two ways, and you can mix them.

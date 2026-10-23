@@ -1422,6 +1422,13 @@
       "when": 1792683952078,
       "tag": "0202_route_protection",
       "breakpoints": true
+    },
+    {
+      "idx": 203,
+      "version": "7",
+      "when": 1792683952079,
+      "tag": "0203_database_reader_bindings",
+      "breakpoints": true
     }
   ]
 }

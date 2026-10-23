@@ -226,6 +226,91 @@ describe("preview templates across stacks", () => {
       ),
     ).toThrow("Environment");
   });
+  test("disabled services are copied with isolated resources so they can be enabled later", () => {
+    const web = { id: "web", name: "web", enabled: true, volumes: ["cache:/cache"] } as Service;
+    const tools = {
+      id: "tools",
+      name: "tools",
+      enabled: false,
+      namespaceVolumes: false,
+      volumes: ["/srv/config:/config:ro", "tools-data:/data"],
+      advanced: { networkMode: "host" },
+    } as unknown as Service;
+    const rows = previewEnvironmentInput(source, [web, tools], 5, "feature").services;
+    expect(rows.map((item) => [item.row.name, item.row.enabled])).toEqual([
+      ["web", true],
+      ["tools", false],
+    ]);
+    expect(rows[1]!.row).toMatchObject({
+      volumes: ["tools-data:/data"],
+      namespaceVolumes: true,
+      advanced: {},
+    });
+    expect(rows[1]!.row.advanced).not.toHaveProperty("networkMode");
+    expect(tools.advanced).toEqual({ networkMode: "host" });
+    expect(tools.volumes).toEqual(["/srv/config:/config:ro", "tools-data:/data"]);
+    expect(() =>
+      previewEnvironmentInput(
+        source,
+        [{ ...rows[1]!.row, id: "copied-tools", enabled: true } as Service],
+        5,
+        "feature",
+      ),
+    ).not.toThrow();
+    for (const enabled of [
+      { ...tools, enabled: true },
+      { ...tools, enabled: undefined },
+      { ...tools, enabled: true, namespaceVolumes: true, advanced: {} },
+      { ...tools, enabled: true, volumes: ["site:/usr/share/nginx/html"], advanced: {} },
+    ])
+      expect(() =>
+        previewEnvironmentInput(source, [web, enabled as Service], 5, "feature"),
+      ).toThrow(/isolated/);
+  });
+  test.each(["host", "container:production-db", " container:production-db "])(
+    "removes external network and PID namespaces %s only from disabled copies",
+    (mode) => {
+      const service = {
+        id: "tools",
+        name: "tools",
+        enabled: false,
+        advanced: { networkMode: mode, pidMode: mode, healthcheck: { test: ["CMD", "true"] } },
+      } as Service;
+      const copied = previewEnvironmentInput(source, [service], 5, "feature").services[0]!.row;
+      expect(copied.advanced).toEqual({ healthcheck: { test: ["CMD", "true"] } });
+      expect(service.advanced).toEqual({
+        networkMode: mode,
+        pidMode: mode,
+        healthcheck: { test: ["CMD", "true"] },
+      });
+      for (const field of ["networkMode", "pidMode"] as const) {
+        expect(() =>
+          previewEnvironmentInput(
+            source,
+            [
+              {
+                ...service,
+                enabled: true,
+                advanced: { [field]: mode },
+              },
+            ],
+            5,
+            "feature",
+          ),
+        ).toThrow(/isolated/);
+      }
+    },
+  );
+  test.each(["service:db", "none"])("preserves isolated namespace mode %s", (networkMode) => {
+    const service = {
+      id: "tools",
+      name: "tools",
+      enabled: false,
+      advanced: { networkMode, pidMode: "service:db", healthcheck: { test: ["CMD", "true"] } },
+    } as unknown as Service;
+    const copied = previewEnvironmentInput(source, [service], 5, "feature").services[0]!.row;
+    expect(copied.advanced).toEqual(service.advanced);
+  });
   test("forks, drafts, wrong base branches and closed PRs cannot run preview code", () => {
     expect(previewEligible(pr, source)).toBe(true);
     for (const change of [

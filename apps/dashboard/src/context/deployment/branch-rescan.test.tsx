@@ -727,6 +727,57 @@ describe("deploy branch detection", () => {
     });
   });
 
+  it("saves monorepo selections, domains and environment without deploying", async () => {
+    api.getInfo.mockResolvedValueOnce({
+      project: {
+        id: "project-1",
+        name: "mono",
+        projectType: "monorepo",
+        gitOwner: "acme",
+        gitRepo: "mono",
+        gitBranch: "main",
+      },
+    });
+    api.listServices.mockResolvedValueOnce({
+      services: [
+        {
+          id: "svc-api",
+          kind: "monorepo",
+          name: "api",
+          rootDirectory: "apps/api",
+          framework: "node",
+          enabled: false,
+          exposed: false,
+          exposedPort: "3000",
+          environment: { MODE: "production" },
+          publicEndpoints: [{ port: 3000, customDomain: "api.example.com", domainType: "custom" }],
+        },
+      ],
+    });
+    await act(async () => {
+      await current.initializeFromProject("project-1");
+    });
+    expect(current.config.monorepoApps?.[0]).toMatchObject({ enabled: false, exposed: false });
+    await act(async () => {
+      await build.startDeployment({ saveConfigOnly: true });
+    });
+    expect(api.ensure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "project-1",
+        monorepoApps: [
+          expect.objectContaining({
+            name: "api",
+            enabled: false,
+            exposed: false,
+            environment: { MODE: "production" },
+            publicEndpoints: [expect.objectContaining({ customDomain: "api.example.com" })],
+          }),
+        ],
+      }),
+    );
+    expect(api.buildAccess).not.toHaveBeenCalled();
+  });
+
   it("replaces monorepo apps, workspace defaults, and mode snapshots when returning to a plain branch", async () => {
     const app = scan("openship");
     api.prepare.mockResolvedValueOnce(
@@ -738,7 +789,8 @@ describe("deploy branch detection", () => {
     );
     await selectBranch("openship");
     expect(current.config.monorepoApps).toHaveLength(1);
-    expect(current.config.modeSnapshots).toBeDefined();
+    expect(current.config.monorepoApps?.[0]?.enabled).toBe(false);
+    expect(current.config.modeSnapshots).toBeUndefined();
     await selectBranch("main");
     expect(current.config).toMatchObject({
       projectType: "app",

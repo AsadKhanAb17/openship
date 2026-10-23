@@ -3234,6 +3234,15 @@ describe("canonical host redirect", () => {
     }
   });
 
+  test("redirects a host that has no upstream of its own (#1418)", async () => {
+    const { nginx, conf } = setup({ certDomains: ["www.example.com"] });
+    const { targetUrl: _upstream, ...noUpstream } = REDIRECT as RouteConfig & { targetUrl?: string };
+    await nginx.registerRoute({ ...noUpstream, notFound: true } as RouteConfig);
+    const c = wwwConf(conf);
+    expect(c).toContain("return 301 https://example.com$request_uri;");
+    expect(c).not.toContain("return 404;");
+  });
+
   test("goes STRAIGHT to the target from :80 — no bounce through our own https", async () => {
     // The destination is a different host, so there's no Flexible-CDN loop to dodge
     // and the conditional self-redirect would only cost an extra round trip.

@@ -1076,6 +1076,11 @@ export async function resolveFromReader(
   opts: ResolveOptions = {},
 ): Promise<ProjectInfo> {
   const rootSnapshot = await readProjectSnapshot(reader, opts.rootDirectory);
+  if (opts.rootDirectory !== undefined && rootSnapshot.files.length === 0) {
+    throw new ValidationError(
+      "The selected app folder is empty or could not be read. Check the folder and repository access, then try again.",
+    );
+  }
   // A saved build directory need not contain the project's manifest: existing
   // projects can declare services, env, and composePath at the repository root.
   // Prefer a subfolder manifest by presence, not parse success, so a malformed
@@ -1097,7 +1102,7 @@ export async function resolveFromReader(
   const declaredComposePath = opts.composePath?.trim() || openship.config?.composePath?.trim();
   const root = declaredComposePath
     ? await resolveDeclaredRoot(reader, declaredComposePath)
-    : rootSnapshot.rootDirectory
+    : opts.rootDirectory !== undefined
       ? {
           selected: buildProjectRootSnapshot(rootSnapshot),
           monorepo: null,
@@ -1183,7 +1188,7 @@ export async function resolveFromReader(
     );
   }
 
-  if (root.declaredComposePath || rootSnapshot.rootDirectory) {
+  if (root.declaredComposePath || opts.rootDirectory !== undefined) {
     // The compose directory IS this project's root — it anchors every relative
     // `build:` context. A saved project directory is authoritative too; neither
     // can be relocated by an openship.json default after the source was read.

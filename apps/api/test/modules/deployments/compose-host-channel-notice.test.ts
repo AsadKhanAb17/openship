@@ -2693,6 +2693,32 @@ it("rejects an invalid GPU request before pulling images or replacing any siblin
   expect(fixture.runtime.destroy).not.toHaveBeenCalled();
 });
 
+it.each([{ ports: [] }, { ports: ["127.0.0.1:25774:25774"] }])(
+  "deploys private services without taking over the edge ($ports)",
+  async ({ ports }) => {
+    h.services = [{ ...h.services[0], exposed: false, customDomain: null, ports }];
+    h.previousServiceRows = [];
+    const runtime = startingRuntime();
+    const exec = vi.fn(async () => {
+      throw new Error("foreign proxy must not be touched");
+    });
+    const system = { ensureFeature: vi.fn(async (_feature: string) => undefined) };
+    const { logger, lines } = recordingLogger();
+    const result = await deployComposeServices(project, dep, runtime, logger, {
+      executor: { exec } as unknown as CommandExecutor,
+      hostPortTarget: localHostPortTarget,
+      system: system as never,
+    });
+    expect(result.status).toBe("ready");
+    expect(system.ensureFeature.mock.calls.map((call) => call[0])).toEqual(["deploy"]);
+    expect(h.prepareTargetPinnedHostPorts).not.toHaveBeenCalled();
+    expect(h.allocateAndReservePinnedHostPort).not.toHaveBeenCalled();
+    expect(runtime.deployServiceWorkload).toHaveBeenCalled();
+    expect(vi.mocked(runtime.deployServiceWorkload).mock.calls[0]?.[1].ports).toEqual(ports);
+    expect(lines.some((line) => line.message.includes("Edge/routing setup failed"))).toBe(false);
+  },
+);
+
 it("passes generated config through scheduler-native files without requiring a host writer", async () => {
   h.services = [{id: "svc-web", projectId: "p1", name: "web", enabled: true, dependsOn: [],
     image: "busybox:1.37", ports: [], volumes: [], exposed: false, environment: {GREETING: "${GREETING:-hello}"},
@@ -2709,4 +2735,24 @@ it("passes generated config through scheduler-native files without requiring a h
     advanced: expect.objectContaining({files: [{path: "/etc/app.yml", content: "enabled: true"}]}),
     volumes: [],
   }), expect.any(Function));
+});
+
+it("refuses automatic private publishes when route inventory is unreadable without preparing the edge", async () => {
+  h.services = [{ ...h.services[0], exposed: false, customDomain: null, ports: ["8800"] }];
+  h.previousServiceRows = [];
+  h.prepareTargetPinnedHostPorts.mockRejectedValueOnce(new Error("route inventory unreadable"));
+  const runtime = startingRuntime();
+  const system = { ensureFeature: vi.fn(async (_feature: string) => undefined) };
+  const { logger } = recordingLogger();
+  await expect(
+    deployComposeServices(project, dep, runtime, logger, {
+      executor: { exec: vi.fn(async () => "") } as unknown as CommandExecutor,
+      hostPortTarget: localHostPortTarget,
+      system: system as never,
+    }),
+  ).rejects.toThrow("route inventory unreadable");
+  expect(system.ensureFeature.mock.calls.map((call) => call[0])).toEqual(["deploy"]);
+  expect(h.prepareTargetPinnedHostPorts).toHaveBeenCalledTimes(1);
+  expect(h.allocateAndReservePinnedHostPort).not.toHaveBeenCalled();
+  expect(runtime.deployServiceWorkload).not.toHaveBeenCalled();
 });

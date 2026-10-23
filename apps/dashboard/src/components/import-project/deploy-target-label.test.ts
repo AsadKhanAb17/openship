@@ -47,4 +47,71 @@ describe("build location", () => {
     expect(summary("docker")).not.toContain(baseDictionary.deploy.summary.buildLocal);
     expect(summary("bare")).toContain(baseDictionary.deploy.summary.buildLocal);
   });
+
+  it.each(["cloud", "cluster"])(
+    "does not promise a local %s build from a stale preference",
+    (deployTarget) => {
+      const config = { deployTarget, buildStrategy: "local", runtimeMode: "bare" };
+      expect(resolveBuildLocation(config)).toBe("target");
+      expect(describeBuildStrategy(config, baseDictionary)).not.toBe(dp.strategyLocal);
+    },
+  );
+
+  it.each([
+    { projectType: "docker" },
+    { projectType: "services", serviceDeploymentMode: "services" },
+    { projectType: "monorepo", serviceDeploymentMode: "services" },
+    { options: { hasServer: false } },
+    { options: { hasServer: true, workloadType: "static" as const } },
+  ])("reports forced Docker builds on the server: %j", (config) => {
+    expect(
+      resolveBuildLocation({
+        deployTarget: "server",
+        buildStrategy: "local",
+        runtimeMode: "bare",
+        ...config,
+      }),
+    ).toBe("target");
+  });
+
+  it("preserves local bare workers and single-app mode", () => {
+    const config = { deployTarget: "server", buildStrategy: "local", runtimeMode: "bare" };
+    expect(
+      resolveBuildLocation({ ...config, options: { workloadType: "worker", hasServer: false } }),
+    ).toBe("local");
+    expect(
+      resolveBuildLocation({ ...config, projectType: "services", serviceDeploymentMode: "single" }),
+    ).toBe("local");
+  });
+
+  it("recognizes the local destination regardless of the legacy strategy", () => {
+    expect(
+      resolveBuildLocation({
+        deployTarget: "local",
+        buildStrategy: "server",
+        runtimeMode: "docker",
+      }),
+    ).toBe("local");
+  });
+
+  it.each([{ isServices: true }, { hasServer: false }])(
+    "uses effective runtime in both target summaries: %j",
+    (props) => {
+      for (const variant of ["inline", "preview"] as const) {
+        const html = renderToStaticMarkup(
+          createElement(DeployTargetSummary, {
+            deployTarget: "server",
+            buildStrategy: "local",
+            runtimeMode: "bare",
+            variant,
+            ...props,
+          }),
+        );
+        expect(html).not.toContain(baseDictionary.deploy.summary.buildLocal);
+        expect(html).toContain(
+          baseDictionary.deploy.summary.buildAndDeploy.replaceAll("&", "&amp;"),
+        );
+      }
+    },
+  );
 });

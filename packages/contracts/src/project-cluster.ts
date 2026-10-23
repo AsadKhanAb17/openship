@@ -46,6 +46,7 @@ export const ProjectClusterSchema = Type.Object({
   serverId: Type.Optional(nullableString),
   config: Type.Union([ClusterWorkloadConfigSchema, Type.Null()]),
   requiresImageRepository: Type.Optional(Type.Boolean()),
+  unavailableReason: Type.Optional(nullableString),
   updatedAt: Type.String(),
   activeDeploymentId: nullableString,
   activeClusterId: nullableString,

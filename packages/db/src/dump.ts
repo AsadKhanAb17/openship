@@ -1099,6 +1099,7 @@ export const ENCRYPTED_COLUMNS: ReadonlyArray<EncryptedColumnSpec> = [
   { table: "two_factor", column: "backupCodes" },
   { table: "cluster_database", column: "secretEncrypted" },
   { table: "cluster_database", column: "envValueEncrypted" },
+  { table: "cluster_database", column: "readEnvValueEncrypted" },
   { table: "user_settings", column: "cloudSessionToken" },
   { table: "user_settings", column: "cloneTokenEncrypted" },
   { table: "user_settings", column: "githubAuthorizationEncrypted" },

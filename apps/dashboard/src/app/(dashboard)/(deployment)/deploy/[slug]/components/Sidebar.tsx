@@ -9,6 +9,7 @@ import { RepositoryBranchSelect } from "@/components/github/RepositoryBranchSele
 import DropdownMenu from "@/components/ui/DropdownMenu";
 import { Button } from "@/components/ui/button";
 import DomainSettings from "./DomainSettings";
+import { MonorepoDomains } from "@/components/import-project/MonorepoDomains";
 import BuildSummary from "./BuildSummary";
 import { LocalDeployComingSoonModal } from "@/components/LocalDeployComingSoonModal";
 import { useLocalDeployGate } from "@/hooks/useLocalDeployGate";
@@ -320,10 +321,17 @@ const Sidebar: React.FC<{ destinationReady: boolean }> = ({ destinationReady }) 
 
     if (
       !isServices &&
-      !config.noPublicRoute &&
+      (!config.noPublicRoute ||
+        (config.projectType === "monorepo" && config.serviceDeploymentMode !== "single")) &&
       canConnectCloud &&
       config.deployTarget !== "cloud" &&
-      publicEndpointsNeedCloud(config.publicEndpoints)
+      publicEndpointsNeedCloud(
+        config.projectType === "monorepo" && config.serviceDeploymentMode !== "single"
+          ? (config.monorepoApps ?? [])
+              .filter((app) => app.enabled && app.exposed !== false)
+              .flatMap((app) => app.publicEndpoints)
+          : config.publicEndpoints,
+      )
     ) {
       if (!(await requireCloud("managed-project-domain", { domain: baseDomain }))) return;
     }
@@ -380,8 +388,36 @@ const Sidebar: React.FC<{ destinationReady: boolean }> = ({ destinationReady }) 
       return;
     }
 
-    await continueDeploy(buildStrategyOverride ? { buildStrategy: buildStrategyOverride } : undefined);
-  }, [baseDomain, canConnectCloud, cloneGate.preference, config.buildStrategy, config.deployTarget, config.owner, config.projectId, config.serverId, config.publicEndpoints, config.services, continueDeploy, destinationReady, hideModal, isServices, localDeployGate, requireCloud, selfHosted, showModal, showToast, updateConfig, t]);
+    await continueDeploy(
+      buildStrategyOverride ? { buildStrategy: buildStrategyOverride } : undefined,
+    );
+  }, [
+    baseDomain,
+    canConnectCloud,
+    cloneGate.preference,
+    config.buildStrategy,
+    config.deployTarget,
+    config.owner,
+    config.projectId,
+    config.serverId,
+    config.publicEndpoints,
+    config.services,
+    config.monorepoApps,
+    config.projectType,
+    config.serviceDeploymentMode,
+    config.noPublicRoute,
+    continueDeploy,
+    destinationReady,
+    hideModal,
+    isServices,
+    localDeployGate,
+    requireCloud,
+    selfHosted,
+    showModal,
+    showToast,
+    updateConfig,
+    t,
+  ]);
 
   // Edit mode (opened from project Settings with ?mode=config): the
   // finish button SAVES the config to the project and returns — no deploy, no
@@ -505,14 +541,9 @@ const Sidebar: React.FC<{ destinationReady: boolean }> = ({ destinationReady }) 
         </div>
       </div>
 
-      {/* Domain - per-service for compose, checklist for others.
-          Monorepo flows through the single-app DomainSettings: its
-          `<PublicEndpointsCard>` already supports multiple endpoints
-          (the "+" button at the header adds another Domain card). The
-          monorepo init seeds `config.publicEndpoints` with one entry
-          per sub-app so the existing card renders them all without a
-          parallel UI. */}
-      {isServices ? (
+      {config.projectType === "monorepo" && config.serviceDeploymentMode !== "single" ? (
+        <MonorepoDomains />
+      ) : isServices ? (
         <ComposeChecklist />
       ) : (
         <DomainSettings
@@ -574,7 +605,14 @@ const Sidebar: React.FC<{ destinationReady: boolean }> = ({ destinationReady }) 
       ) : (
         <button
           onClick={handleDeploy}
-          disabled={state.isDeploying || isRescanning || !destinationReady}
+          disabled={
+            state.isDeploying ||
+            isRescanning ||
+            !destinationReady ||
+            (config.projectType === "monorepo" &&
+              config.serviceDeploymentMode !== "single" &&
+              !config.monorepoApps?.some((app) => app.enabled))
+          }
           className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 bg-primary text-primary-foreground text-sm font-medium rounded-xl hover:bg-primary/90 transition-all hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {state.isDeploying ? (

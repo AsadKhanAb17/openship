@@ -23,6 +23,8 @@ import { AddServiceModal } from "./services/AddServiceModal";
 import { LinkedAppsCard } from "./services/LinkedAppsCard";
 import { ServiceListItem } from "./services/ServiceListItem";
 import { hasSeparateApplication } from "@/lib/project-application";
+import { RuntimeRoleConfigurationControl } from "@/components/services/RuntimeRoleConfiguration";
+import { RuntimeRolesCard } from "@/components/services/RuntimeRoles";
 import { ProjectApplicationCard } from "./services/ProjectApplicationCard";
 
 /** Render a drift diff value (arrays → csv, objects → keys, scalars → string). */
@@ -476,7 +478,11 @@ export const ServicesTab = () => {
             { count: String(services.length) },
           )}
         </h2>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!hasApplication && projectData.activeDeploymentId && projectData.runtimeMode === "docker" &&
+            projectData.deployTarget !== "cloud" && !projectData.clusterId && (
+            <RuntimeRoleConfigurationControl projectId={id} deploymentId={projectData.activeDeploymentId} />
+          )}
           <Button asChild variant="ghost" size="sm">
             <Link href={`/projects/${id}/topology`}>
               <UiIcon name="network" />
@@ -501,6 +507,8 @@ export const ServicesTab = () => {
           </Button>
         </div>
       </div>
+
+      {!hasApplication && <RuntimeRolesCard projectId={id} deploymentId={projectData.activeDeploymentId} />}
 
       {/* Upstream compose drift — edited services whose repo values changed */}
       {driftedServices.length > 0 && (

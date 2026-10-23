@@ -9,8 +9,8 @@ export async function persistRouteProtectionDrafts(projectId: string, config: De
     ...config.services
       .filter((service) => service.exposed)
       .flatMap((service) => service.publicEndpoints ?? []),
-    ...(config.monorepoApps ?? [])
-      .filter((app) => app.enabled)
+    ...(config.serviceDeploymentMode === "single" ? [] : config.monorepoApps ?? [])
+      .filter((app) => app.enabled && app.exposed !== false)
       .flatMap((app) => app.publicEndpoints),
   ];
   const changes = new Map<string, NonNullable<PublicEndpoint["protectionDraft"]>>();

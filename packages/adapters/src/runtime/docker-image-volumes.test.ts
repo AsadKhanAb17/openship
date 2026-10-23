@@ -92,6 +92,17 @@ describe("image-declared persistent volumes", () => {
     expect(await resolve([], ["/data"], input)).toEqual(["old-anonymous-volume:/data:ro"]);
   });
 
+  it("preserves deployed workload storage when its source image also carries a build label", async () => {
+    const { resolve, legacy, docker } = daemon();
+    const input = legacy({
+      "openship.project": "project-a",
+      "openship.deployment": "old",
+      "openship.build": "inherited-image-build",
+    } as any);
+    expect(await resolve([], ["/data"], input)).toEqual(["old-anonymous-volume:/data"]);
+    expect(docker.createVolume).not.toHaveBeenCalled();
+  });
+
   it.each([
     { "openship.project": "other" },
     { "openship.project": "project-a", "openship.role": "worker" },

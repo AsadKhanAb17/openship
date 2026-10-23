@@ -4,7 +4,11 @@ import { DockerRuntime } from "@repo/adapters";
 import { repos, type Deployment, type Project } from "@repo/db";
 import type { RuntimeRoleConfigurationInput } from "@repo/contracts";
 import type { ExecutionContext } from "@repo/platform";
-import { shouldUseProjectServicePipeline } from "../deployments/compose/project-services";
+import {
+  listProjectComposeServices,
+  primaryAppWithInfrastructure,
+  shouldUseProjectServicePipeline,
+} from "../deployments/compose/project-services";
 import { snapshotToClass } from "../deployments/deployment-class";
 import { findActiveDeployment } from "../../lib/active-deployment";
 import { assertResourceInOrg, assertNotControlPlane } from "../../lib/resource-access";
@@ -36,14 +40,18 @@ async function unsupported(
   const base = platform();
   const target = resolveEffectiveTarget(base.target, meta);
   if (
+    project.workspaceId ||
     target === "cloud" ||
     target === "cluster" ||
     resolveSnapshotRuntimeMode(meta, target, base) !== "docker" ||
-    meta.composeServices?.length ||
     snapshotToClass(meta).workload === "static"
   )
     return unsupportedRuntime;
-  if (await shouldUseProjectServicePipeline(project, meta.composeServices))
+  const services = await listProjectComposeServices(project.id);
+  if (
+    (await shouldUseProjectServicePipeline(project, meta.composeServices, services)) &&
+    !primaryAppWithInfrastructure(project, services)
+  )
     return unsupportedRuntime;
   return null;
 }
@@ -126,6 +134,10 @@ export async function configureRuntimeRoles(
       const identity = await inspectRoleConfigurationImage(runtime, live, active!);
       const snapshot: DeploymentConfigSnapshot = {
         ...(active!.meta as DeploymentConfigSnapshot),
+        // A roles-only revision must never inherit an earlier service refresh.
+        targetServiceIds: undefined,
+        refreshServiceIds: undefined,
+        strictServiceScope: undefined,
         roles,
         handoverAppImage: identity.imageId,
         refreshAppDeploymentId: active!.id,

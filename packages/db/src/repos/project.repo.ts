@@ -2,7 +2,7 @@ import { eq, and, or, isNull, isNotNull, inArray, desc, sql, type SQL } from "dr
 import { generateId, ForbiddenError, UnauthorizedError, ConflictError, ValidationError, inspectCommandEnvironment, manualBuildCaches } from "@repo/core";
 import type { Database, DatabaseTransaction } from "../connection";
 import { createConfigurationSecrets, type ConfigurationEncryption } from "../configuration-secrets";
-import { project, projectGroup, envVar, deployment, service } from "../schema";
+import { project, projectGroup, envVar, deployment, service, domain } from "../schema";
 import { member } from "../schema/organization";
 // Cloning a project writes its group and service rows in the same transaction, so this repo
 // needs both insert types. Imported from their own repos (where they are already declared)
@@ -702,9 +702,9 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
      * to that server — preferring the DURABLE `project.server_id` binding and
      * falling back to the active deployment's `meta.serverId` for legacy rows not
      * yet backfilled. Powers the "N projects" chip + Projects stat on the Servers
-     * list (and the container-issues classifier's absent-edge alarm).
+     * list. `withRoutes` limits the missing-edge alarm to projects with durable routes.
      */
-    async countActiveByServer(organizationId: string): Promise<Record<string, number>> {
+    async countActiveByServer(organizationId: string, opts: { withRoutes?: boolean } = {}): Promise<Record<string, number>> {
       const rows = await db
         .select({
           serverId: boundServerId,
@@ -717,6 +717,17 @@ export function createProjectRepo(db: Database, encryption: ConfigurationEncrypt
             eq(project.organizationId, organizationId),
             isNull(project.deletedAt),
             sql`${boundServerId} is not null`,
+            // Domain rows are the durable route inventory. Private services and
+            // workers do not require an edge merely because they are deployed.
+            opts.withRoutes ? sql`exists (
+              select 1 from ${domain}
+              left join ${service} on ${domain.serviceId} = ${service.id}
+              where ${domain.projectId} = ${project.id} and ${domain.status} <> 'removing'
+                and (${domain.targetPort} is not null or ${domain.targetPath} is not null
+                  or exists (select 1 from jsonb_array_elements(coalesce(${project.compositeRoutes}, '[]'::jsonb)) route
+                    where route->>'hostname' = ${domain.hostname}))
+                and (${domain.serviceId} is null or (${service.enabled} and ${service.exposed}))
+            )` : undefined,
           ),
         )
         .groupBy(boundServerId);

@@ -1263,6 +1263,41 @@ describe("triggerDeployment", () => {
     expect(resolveProjectInfo).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    { entry: "smart redeploy", trigger: "manual", smartRoute: true, explicit: false, strict: false, wholeApp: true },
+    { entry: "push", trigger: "webhook", smartRoute: false, explicit: true, strict: false, wholeApp: true },
+    { entry: "exact hook", trigger: "webhook", smartRoute: false, explicit: true, strict: true, wholeApp: false },
+    { entry: "service action", trigger: "manual", smartRoute: false, explicit: true, strict: false, wholeApp: false },
+  ])("keeps primary-app release/role orchestration during $entry without broadening an explicit scope", async ({ trigger, smartRoute, explicit, strict, wholeApp }) => {
+    const targets = ["svc-app", "svc-db"];
+    repos.service.listByProject.mockResolvedValue(targets.map(id => ({ id, name: id, enabled: true, advanced: null })));
+    resolveServicePipelineMode.mockResolvedValue({
+      useServicePipeline: false,
+      useSingleAppPipeline: false,
+      primaryApp: { app: { id: "svc-app", name: "app" }, infrastructure: [{ id: "svc-db" }] },
+      servicePreflightServices: [
+        { name: "app", kind: "monorepo" },
+        { name: "db", kind: "compose", image: "postgres:16" },
+      ],
+    });
+    resolveSmartRoute.mockResolvedValue({ forceAll: false, serviceIds: targets, changedPaths: ["src/app.php"] });
+    await triggerDeployment(ctx, {
+      projectId: "project-1", trigger, smartRoute,
+      ...(explicit ? { serviceIds: targets } : {}),
+      strictServiceScope: strict,
+    });
+    const saved = repos.deployment.create.mock.calls.at(-1)![0];
+    expect(saved.meta).toMatchObject({ primaryAppServiceName: "app" });
+    if (wholeApp) {
+      expect(saved.meta.targetServiceIds).toBeUndefined();
+      expect(saved.meta.refreshServiceIds).toBeUndefined();
+      expect(saved.forceAll).toBe(true);
+    } else {
+      expect(saved.meta.targetServiceIds).toEqual(targets);
+      if (strict) expect(saved.meta.strictServiceScope).toBe(true);
+    }
+  });
+
   it.each(["webhook", "update"])("persists the exact service scope for an %s deployment", async (trigger) => {
     const targets = ["svc-api", "svc-worker"];
     repos.service.listByProject.mockResolvedValue([

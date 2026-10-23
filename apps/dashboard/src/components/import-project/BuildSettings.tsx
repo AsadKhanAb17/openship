@@ -30,8 +30,9 @@ interface InputField {
 }
 
 interface BuildSettingsProps {
-  variant?: 'deploy' | 'import';
-  mode?: 'simple' | 'advanced';
+  allowWorker?: boolean;
+  variant?: "deploy" | "import";
+  mode?: "simple" | "advanced";
   buildData?: any;
   onSave?: (field: string, value: string) => Promise<void>;
   loading?: { [key: string]: boolean };
@@ -40,7 +41,8 @@ interface BuildSettingsProps {
 }
 
 const BuildSettings: React.FC<BuildSettingsProps> = ({
-  mode = 'simple',
+  mode = "simple",
+  allowWorker = true,
   buildData: externalBuildData,
   onSave,
   loading = {},
@@ -642,22 +644,28 @@ const BuildSettings: React.FC<BuildSettingsProps> = ({
                   <UiIcon name="play" className="size-3.5 shrink-0 text-muted-foreground" />
                   <p className="text-sm font-medium text-foreground">{bs.start}</p>
                 </div>
-                <div role="group" aria-label={bs.start} className="grid grid-cols-3 gap-1">
-                  {workloadOptions.map((opt) => (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      onClick={() => setWorkload(opt.value)}
-                      aria-pressed={workload === opt.value}
-                      className={`px-2 py-1.5 text-sm font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
-                        workload === opt.value
-                          ? "bg-foreground text-background"
-                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
+                <div
+                  role="group"
+                  aria-label={bs.start}
+                  className={`grid ${allowWorker ? "grid-cols-3" : "grid-cols-2"} gap-1`}
+                >
+                  {workloadOptions
+                    .filter((opt) => allowWorker || opt.value !== "worker")
+                    .map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setWorkload(opt.value)}
+                        aria-pressed={workload === opt.value}
+                        className={`px-2 py-1.5 text-sm font-medium rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 ${
+                          workload === opt.value
+                            ? "bg-foreground text-background"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
                 </div>
               </div>
               <div className="min-w-0 space-y-4 empty:hidden @min-[40rem]/build-settings:col-start-2 @min-[40rem]/build-settings:row-start-2">

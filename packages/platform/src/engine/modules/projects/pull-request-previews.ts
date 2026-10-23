@@ -68,16 +68,21 @@ export function previewEnvironmentInput(
 ) {
   const suffix = createHash("sha256").update(source.id).digest("hex").slice(0, 6);
   const slug = `${source.slug.slice(0, 35)}-pr-${number}-${suffix}`;
-  const safeVolumes = (volumes: readonly string[] | null | undefined) => {
+  const safeVolumes = (volumes: readonly string[] | null | undefined, deployed = true) => {
+    const kept: string[] = [];
     for (const spec of volumes ?? []) {
       const { source } = parseVolumeMount(spec);
-      if (isHostPathSource(source) || source === "." || source === "..")
+      if (isHostPathSource(source) || source === "." || source === "..") {
+        // Strip host paths from disabled copies before they can be enabled.
+        if (!deployed) continue;
         throw new AppError(
           "PR previews require isolated named volumes; host bind mounts must be removed from the preview template.",
           400,
         );
+      }
+      kept.push(spec);
     }
-    return volumes ? [...volumes] : null;
+    return volumes ? kept : null;
   };
   const commands = (row: {
     installCommand?: string | null;
@@ -156,13 +161,12 @@ export function previewEnvironmentInput(
     services: services.map((row) => {
       commands(row);
       const advanced = row.advanced ?? {};
-      if (
-        row.namespaceVolumes === false ||
-        advanced.networkMode === "host" ||
-        advanced.pidMode === "host" ||
-        advanced.networkMode?.startsWith("container:") ||
-        advanced.pidMode?.startsWith("container:")
-      )
+      const deployed = row.enabled !== false;
+      const externalNamespaceFields = (["networkMode", "pidMode"] as const).filter((field) => {
+        const mode = advanced[field]?.trim();
+        return mode === "host" || mode?.startsWith("container:");
+      });
+      if (deployed && (row.namespaceVolumes === false || externalNamespaceFields.length > 0))
         throw new AppError(
           `Service ${row.name} shares host resources. PR previews require isolated services.`,
           400,
@@ -170,6 +174,9 @@ export function previewEnvironmentInput(
       // Copy build/runtime settings, with new infrastructure identities and fresh volumes.
       const { id, projectId, createdAt, updatedAt, ...copy } = row;
       const previewAdvanced: ComposeAdvanced = { ...advanced };
+      // Start can enable a disabled service without preview admission. Remove
+      // external namespaces from the copy, just like its host bind mounts.
+      for (const field of externalNamespaceFields) delete previewAdvanced[field];
       if (advanced.files?.length || advanced.build)
         throw new AppError(
           `Service ${row.name} has generated configuration that may contain production credentials. Use repository source and preview variables for previews.`,
@@ -202,7 +209,7 @@ export function previewEnvironmentInput(
         row: {
           ...copy,
           namespaceVolumes: true,
-          volumes: safeVolumes(row.volumes) ?? [],
+          volumes: safeVolumes(row.volumes, deployed) ?? [],
           ports: (row.ports ?? []).map((port) => port.split(":").at(-1)!),
           hostPort: null,
           domain: publicEndpoints[0]?.domain ?? null,

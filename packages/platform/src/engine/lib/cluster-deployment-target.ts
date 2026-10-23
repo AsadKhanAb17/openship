@@ -2,7 +2,7 @@ import net from "node:net";
 import { parse } from "yaml";
 import {
   AppError,
-  clusterWorkloadNeedsOperator,
+  clusterWorkloadUnsupportedReason,
   infrastructureCidr,
   validateClusterWorkload,
   type ComposeAdvanced,
@@ -103,17 +103,8 @@ export async function assertClusterWorkloadSupported(input: {
         "CLUSTER_REGISTRY_REQUIRED",
       );
   } else {
-    if (
-      input.workload === "static" ||
-      input.volumes?.length ||
-      input.services?.length ||
-      clusterWorkloadNeedsOperator(input.framework, input.image)
-    )
-      throw new AppError(
-        "Scaling currently supports applications and workers that can run independently. Databases and applications with persistent storage need a separate replication and storage setup. Compose stacks must stay on their current target.",
-        422,
-        "CLUSTER_WORKLOAD_UNSUPPORTED",
-      );
+    const reason = clusterWorkloadUnsupportedReason(input);
+    if (reason) throw new AppError(reason, 422, "CLUSTER_WORKLOAD_UNSUPPORTED");
     if (!input.image && !input.imageRepository)
       throw new AppError(
         "Choose a registry repository for this project's source builds. Cluster nodes need a shared image to pull.",

@@ -44,6 +44,7 @@ const SCHEME_BY_KEY: Record<string, { table: AnyTable; scheme: SecretScheme }> =
   "two_factor.backupCodes": { table: schema.twoFactor, scheme: "better-auth" },
   "cluster_database.secretEncrypted": { table: schema.clusterDatabase, scheme: "scalar" },
   "cluster_database.envValueEncrypted": { table: schema.clusterDatabase, scheme: "scalar" },
+  "cluster_database.readEnvValueEncrypted": { table: schema.clusterDatabase, scheme: "scalar" },
   "user_settings.cloudSessionToken": { table: schema.userSettings, scheme: "scalar" },
   "user_settings.cloneTokenEncrypted": { table: schema.userSettings, scheme: "scalar" },
   "user_settings.githubAuthorizationEncrypted": { table: schema.userSettings, scheme: "scalar" },

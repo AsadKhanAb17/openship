@@ -244,3 +244,27 @@ describe("runtime role configuration admission", () => {
     expect(h.start).not.toHaveBeenCalled();
   });
 });
+
+it("configures roles for one inherited source app with a private image service and drops a prior service scope", async () => {
+  const f = await fixture();
+  await db.update(schema.project).set({ framework: "node", startCommand: "exec app", rootDirectory: "." })
+    .where(eq(schema.project.id, f.project.id));
+  const database = await repos.service.create({ projectId: f.project.id, name: "database", kind: "compose",
+    image: "postgres:16-alpine", enabled: true, exposed: false });
+  await repos.service.create({ projectId: f.project.id, name: f.project.slug, kind: "monorepo",
+    rootDirectory: ".", sortOrder: -1, enabled: true });
+  await repos.deployment.updateStatus(f.active.id, "ready", { meta: {
+    ...(f.active.meta as Record<string, unknown>), targetServiceIds: [database.id],
+    refreshServiceIds: [database.id], strictServiceScope: true,
+  } });
+  const config = await getRoleConfiguration(f.project.id, f.org.organizationId);
+  expect(config.supported).toBe(true);
+  const queued = await configureRuntimeRoles(f.ctx, f.project.id, {
+    ...f.input, expectedUpdatedAt: config.updatedAt,
+  });
+  const snapshot = (await repos.deployment.findById(queued.deploymentId))!.meta as Record<string, unknown>;
+  expect(snapshot.targetServiceIds).toBeUndefined();
+  expect(snapshot.refreshServiceIds).toBeUndefined();
+  expect(snapshot.strictServiceScope).toBeUndefined();
+  expect(snapshot.roles).toEqual(f.input.roles);
+});

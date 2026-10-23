@@ -801,6 +801,12 @@ function buildProductionProjectInput(
   };
 }
 
+function assertUniqueMonorepoNames(data: EnsureProjectBody): void {
+  const names = data.monorepoApps?.map((app) => app.name) ?? [];
+  if (new Set(names).size !== names.length)
+    throw new ValidationError("Each monorepo app must have a unique name.");
+}
+
 async function persistMonorepoApps(projectId: string, data: TCreateProjectBody): Promise<void> {
   if (data.projectType !== "monorepo" || !data.monorepoApps?.length) return;
 
@@ -815,9 +821,7 @@ async function persistMonorepoApps(projectId: string, data: TCreateProjectBody):
   const needsRows =
     data.monorepoApps.some((app) => hasMaskedValue(app.environment)) ||
     customHostnamesOf(data.monorepoApps).length > 0;
-  const storedRows = needsRows
-    ? await repos.service.listByProjectKind(projectId, "monorepo").catch((diagnosticFailure) => { observeCaughtError(diagnosticFailure, "platform/engine/modules/projects/project-crud.service"); return []; })
-    : [];
+  const storedRows = needsRows ? await repos.service.listByProjectKind(projectId, "monorepo") : [];
   const storedEnvByName = new Map<string, Record<string, string>>(
     storedRows.map((row) => [row.name, (row.environment as Record<string, string> | null) ?? {}]),
   );
@@ -836,6 +840,7 @@ async function persistMonorepoApps(projectId: string, data: TCreateProjectBody):
       startCommand: app.startCommand ?? null,
       outputDirectory: app.outputDirectory ?? null,
       port: app.port ?? null,
+      publicEndpoints: app.publicEndpoints,
       enabled: app.enabled ?? true,
       exposed: app.exposed ?? true,
       exposedPort: app.port != null ? String(app.port) : null,
@@ -1516,6 +1521,7 @@ export async function withProjectCreationLock<T>(organizationId: string, create:
 }
 
 export async function ensureProject(data: EnsureProjectBody, organizationId: string, ctx?: RequestContext, options?: { mustCreate: true }) {
+  assertUniqueMonorepoNames(data);
   const nameSlug = slugify(data.name);
   const desiredSlug = data.slug || nameSlug;
 
@@ -1735,6 +1741,7 @@ export async function getProject(projectId: string, organizationId: string) {
 
 /** @scope org — only reads organizationId as a DB key. */
 export async function createProject(data: EnsureProjectBody, organizationId: string, access?: { tokenId: string }, ctx?: RequestContext) {
+  assertUniqueMonorepoNames(data);
   const slug = slugify(data.name);
 
   const existing = await findProjectByAppSlug(organizationId, slug);

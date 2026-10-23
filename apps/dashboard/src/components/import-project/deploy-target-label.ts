@@ -1,5 +1,6 @@
 import { interpolate } from "@/components/i18n-provider";
 import type { Dictionary } from "@/i18n";
+import { resolveWorkload, type WorkloadType } from "@repo/core";
 
 /**
  * WHERE this deploy lands and WHERE it builds, as display strings.
@@ -31,28 +32,46 @@ export function describeBuildTarget(
   return "—";
 }
 
-/**
- * Where the build actually runs. For a server deploy only the bare runtime builds
- * on this machine; a Docker image is always built by the server's daemon (#535),
- * and a "local" pick there only moves where the source is cloned. Every build
- * location label and the build picker must ask here, or the UI promises a local
- * build while the server does the work (#957).
- */
-export function resolveBuildLocation(config: {
+interface BuildLocationConfig {
   deployTarget: string;
   buildStrategy: string;
   runtimeMode?: string;
-}): "local" | "target" {
-  if (config.buildStrategy !== "local") return "target";
-  return config.deployTarget === "server" && config.runtimeMode !== "bare" ? "target" : "local";
+  projectType?: string;
+  serviceDeploymentMode?: string;
+  options?: { workloadType?: WorkloadType | null; hasServer?: boolean | null };
+}
+
+/** Display the execution location, not the clone location. Remote Docker builds
+ * use the target daemon; managed and cluster builds stay on their destinations.
+ * Only a single bare app can build on this instance and transfer its output.
+ * Static server apps build in Docker even though they are served as bare files.
+ * See resolveBuildRuntimeModes in the deployment engine and #535 for local Docker.
+ */
+export function resolveBuildLocation(config: BuildLocationConfig): "local" | "target" {
+  if (config.deployTarget === "local") return "local";
+  if (
+    config.deployTarget !== "server" ||
+    config.buildStrategy !== "local" ||
+    config.runtimeMode !== "bare"
+  ) {
+    return "target";
+  }
+  const buildsServices =
+    (config.projectType === "services" || config.projectType === "monorepo") &&
+    config.serviceDeploymentMode !== "single";
+  if (
+    config.projectType === "docker" ||
+    buildsServices ||
+    resolveWorkload(config.options?.workloadType, config.options?.hasServer) === "static"
+  ) {
+    return "target";
+  }
+  return "local";
 }
 
 /** Where the build runs (vs where it deploys, shown by the target above).
  *  Concise so it fits the narrow info column without truncating. */
-export function describeBuildStrategy(
-  config: { deployTarget: string; buildStrategy: string; runtimeMode?: string },
-  t: Dictionary,
-): string {
+export function describeBuildStrategy(config: BuildLocationConfig, t: Dictionary): string {
   const dp = t.importProject.deploymentProcessing;
   if (resolveBuildLocation(config) === "local") return dp.strategyLocal;
   if (config.deployTarget === "cloud") return dp.strategyCloud;

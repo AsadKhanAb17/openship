@@ -19,18 +19,31 @@ import { NetworkSetupConfirmation } from "./NetworkSetupConfirmation";
 import { NetworkStreamNotice } from "./NetworkStreamNotice";
 
 /** Inline, durable setup; reconnecting only reads progress and never restarts installation. */
-export function ClusterRuntimePanel(props: { cluster: ComputeCluster; canManage: boolean; onReadyChange?: (ready: boolean) => void; }) {
+export function ClusterRuntimePanel(props: {
+  cluster: ComputeCluster;
+  canManage: boolean;
+  embedded?: boolean;
+  onReadyChange?: (ready: boolean) => void;
+}) {
   if (!props.cluster.network) return null;
-  return <NativeClusterRuntimePanel {...props} cluster={{...props.cluster, network: props.cluster.network}} />;
+  return (
+    <NativeClusterRuntimePanel
+      {...props}
+      cluster={{ ...props.cluster, network: props.cluster.network }}
+    />
+  );
 }
 
 function NativeClusterRuntimePanel({
   cluster,
   canManage,
   onReadyChange,
+  embedded = false,
 }: {
-  cluster: ComputeCluster & {network: NonNullable<ComputeCluster["network"]>};
+  cluster: ComputeCluster & { network: NonNullable<ComputeCluster["network"]> };
   canManage: boolean;
+  /** Workload setup does not offer infrastructure removal or leave its draft. */
+  embedded?: boolean;
   onReadyChange?: (ready: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -110,7 +123,10 @@ function NativeClusterRuntimePanel({
       try {
         receive(await computeClustersApi.runtime(cluster.id));
       } catch (diagnosticFailure) {
-        observeCaughtError(diagnosticFailure, "dashboard/components/servers/clusters/ClusterRuntimePanel");
+        observeCaughtError(
+          diagnosticFailure,
+          "dashboard/components/servers/clusters/ClusterRuntimePanel",
+        );
         /* Preserve the action's original error. */
       }
     } finally {
@@ -180,7 +196,7 @@ function NativeClusterRuntimePanel({
                   {t.servers.clusters.retry}
                 </Button>
               )}
-              {runtime && !available && !running && (
+              {!embedded && runtime && !available && !running && (
                 <Button
                   variant="ghost"
                   disabled={busy}
@@ -221,13 +237,15 @@ function NativeClusterRuntimePanel({
             {runtime?.status === "ready" && (
               <div className="mt-4 space-y-3">
                 <p className="text-sm text-muted-foreground">{c.readyHint}</p>
-                <Link
-                  href="/projects"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-                >
-                  {c.scaleProject}
-                  <UiIcon name="arrow-right" className="size-4 rtl:rotate-180" />
-                </Link>
+                {!embedded && (
+                  <Link
+                    href="/projects"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                  >
+                    {c.scaleProject}
+                    <UiIcon name="arrow-right" className="size-4 rtl:rotate-180" />
+                  </Link>
+                )}
                 {runtime.verifiedAt && (
                   <p className="text-xs text-muted-foreground">
                     {c.lastChecked}{" "}

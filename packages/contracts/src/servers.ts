@@ -170,6 +170,7 @@ export const ServerDetailSchema = Type.Object(
   {
     ...serverFields,
     projectCount: Type.Integer({ minimum: 0 }),
+    edgeRequired: Type.Optional(Type.Boolean()),
     hostChannel: Type.Union([HostChannelSchema, Type.Null()]),
   },
   { additionalProperties: false },

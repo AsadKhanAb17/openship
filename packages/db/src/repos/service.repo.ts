@@ -926,6 +926,7 @@ export function createServiceRepo(db: Database, encryption: ConfigurationEncrypt
         startCommand?: string | null;
         outputDirectory?: string | null;
         port?: number | string | null;
+        publicEndpoints?: PublicEndpointInputLike[];
         enabled?: boolean;
         exposed?: boolean;
         exposedPort?: string | null;
@@ -945,11 +946,15 @@ export function createServiceRepo(db: Database, encryption: ConfigurationEncrypt
         const ex = existingByName.get(app.name);
 
         const routing = normalizeRoutingFields({
+          publicEndpoints: app.publicEndpoints ?? ex?.publicEndpoints,
           exposed: app.exposed ?? ex?.exposed ?? true,
           exposedPort:
             app.exposedPort ?? ex?.exposedPort ?? (app.port != null ? String(app.port) : null),
-          domain: app.domain ?? ex?.domain,
-          customDomain: app.customDomain ?? ex?.customDomain,
+          domain: app.publicEndpoints !== undefined ? app.domain : (app.domain ?? ex?.domain),
+          customDomain:
+            app.publicEndpoints !== undefined
+              ? app.customDomain
+              : (app.customDomain ?? ex?.customDomain),
           domainType: app.domainType ?? ex?.domainType,
         });
 

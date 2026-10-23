@@ -32,6 +32,9 @@ import { randomUUID } from "@/lib/random-uuid";
  * monorepoWorkspace install at the repo root.
  */
 export interface MonorepoAppConfig {
+  suggested?: boolean;
+  /** Public routing is separate from whether the app is deployed. */
+  exposed?: boolean;
   /** Stable identifier (defaults to rootDirectory). */
   id: string;
   /** Display name (last segment of rootDirectory, or package.json name). */
@@ -688,6 +691,9 @@ function normalizePublicEndpointForMode(
 }
 
 export function syncPublicEndpointState(config: DeploymentConfig): DeploymentConfig {
+  if (config.projectType === "monorepo" && config.serviceDeploymentMode === "services") {
+    return { ...config, publicEndpoints: [] };
+  }
   const workload = workloadOf(config.options);
 
   // A worker (#538) binds no port and is never routed — it has no public
