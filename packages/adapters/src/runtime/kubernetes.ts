@@ -1135,6 +1135,11 @@ export class KubernetesRuntime implements RuntimeAdapter {
       "EndpointSlice",
       "Secret",
       "NetworkPolicy",
+      // Kinds that project manifests may create (cluster/project-manifests.ts).
+      // They still have to carry this project's ownership labels to be accepted.
+      "ConfigMap",
+      "Job",
+      "CronJob",
     ]);
     for (const object of objects) {
       if (object.kind === "PersistentVolumeClaim")

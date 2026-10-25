@@ -632,6 +632,7 @@ export * from "./cluster/storage";
 export * from "./cluster/storage-host";
 export * from "./cluster/volumes";
 export * from "./cluster/kubernetes-label";
+export * from "./cluster/project-manifests";
 export * from "./cluster/database";
 export { databaseArchiveName } from "./cluster/redis-backups";
 export * from "./runtime/kubernetes";

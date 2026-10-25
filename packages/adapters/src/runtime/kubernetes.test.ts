@@ -691,4 +691,37 @@ describe("Kubernetes workload lifecycle", () => {
       ).toBe(false);
     },
   );
+  it.each(["ConfigMap", "Job", "CronJob"])(
+    "removes a project-manifest %s that carries this project's ownership labels (#1039)",
+    async (kind) => {
+      const fixture = setup();
+      const deployment = await fixture.runtime.deploy(config());
+      const namespace = `/api/v1/namespaces/${fixture.runtime.namespace}`;
+      const labels = fixture.resources.get(namespace)!.metadata.labels;
+      await fixture.runtime.destroy(deployment.containerId!);
+      discoverForCleanup(fixture, {
+        kind,
+        name: "manifest-objects",
+        value: { kind, metadata: { name: "from-manifest", uid: "manifest", labels } },
+      });
+      await fixture.runtime.cleanupProject("project-1");
+      expect(fixture.resources.has(namespace)).toBe(false);
+    },
+  );
+  it("still preserves a ConfigMap this project does not own", async () => {
+    const fixture = setup();
+    const deployment = await fixture.runtime.deploy(config());
+    const namespace = `/api/v1/namespaces/${fixture.runtime.namespace}`;
+    await fixture.runtime.destroy(deployment.containerId!);
+    discoverForCleanup(fixture, {
+      kind: "ConfigMap",
+      name: "configmaps",
+      value: {
+        kind: "ConfigMap",
+        metadata: { name: "operator-config", uid: "foreign", labels: {} },
+      },
+    });
+    await expect(fixture.runtime.cleanupProject("project-1")).rejects.toThrow("ConfigMap");
+    expect(fixture.resources.has(namespace)).toBe(true);
+  });
 });
