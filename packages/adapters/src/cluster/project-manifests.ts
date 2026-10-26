@@ -15,14 +15,17 @@ import { kubernetesIdLabel } from "./kubernetes-label";
  * cleanup). The allowlist is deliberately small; widening it is a separate decision.
  */
 export const PROJECT_MANIFEST_KINDS: Readonly<
-  Record<string, { apiVersion: string; plural: string; order: number }>
+  Record<
+    string,
+    { apiVersion: string; plural: string; order: number; update: "replace" | "create-only" }
+  >
 > = {
-  ConfigMap: { apiVersion: "v1", plural: "configmaps", order: 0 },
-  Secret: { apiVersion: "v1", plural: "secrets", order: 0 },
-  Service: { apiVersion: "v1", plural: "services", order: 1 },
-  Deployment: { apiVersion: "apps/v1", plural: "deployments", order: 2 },
-  Job: { apiVersion: "batch/v1", plural: "jobs", order: 2 },
-  CronJob: { apiVersion: "batch/v1", plural: "cronjobs", order: 2 },
+  ConfigMap: { apiVersion: "v1", plural: "configmaps", order: 0, update: "replace" },
+  Secret: { apiVersion: "v1", plural: "secrets", order: 0, update: "replace" },
+  Service: { apiVersion: "v1", plural: "services", order: 1, update: "replace" },
+  Deployment: { apiVersion: "apps/v1", plural: "deployments", order: 2, update: "replace" },
+  Job: { apiVersion: "batch/v1", plural: "jobs", order: 2, update: "create-only" },
+  CronJob: { apiVersion: "batch/v1", plural: "cronjobs", order: 2, update: "replace" },
 };
 
 export const MAX_PROJECT_MANIFEST_BYTES = 1024 * 1024;
@@ -118,6 +121,33 @@ function assertNoReservedKeys(
       throw invalid(`${where} sets the reserved ${field} "${key}".`);
 }
 
+function assertMetadata(metadata: Record<string, any> | undefined, where: string) {
+  if (metadata?.ownerReferences !== undefined)
+    throw invalid(`${where}: ownerReferences are not allowed.`);
+  if (metadata?.finalizers !== undefined) throw invalid(`${where}: finalizers are not allowed.`);
+  assertNoReservedKeys(metadata?.labels, "label", where);
+  assertNoReservedKeys(metadata?.annotations, "annotation", where);
+}
+
+function assertSelector(selector: Record<string, any> | undefined, where: string) {
+  assertNoReservedKeys(selector?.matchLabels, "selector", where);
+  for (const expression of selector?.matchExpressions ?? []) {
+    if (typeof expression?.key === "string")
+      assertNoReservedKeys({ [expression.key]: "" }, "selector", where);
+  }
+}
+
+function assertWorkloadMetadata(object: KubernetesObject, where: string) {
+  const workload = object.kind === "CronJob" ? object.spec?.jobTemplate : object;
+  const templates = [workload?.spec?.template];
+  if (object.kind === "CronJob") templates.push(workload);
+  for (const template of templates) {
+    assertMetadata(template?.metadata, `${where} template`);
+    if (template?.metadata?.namespace) throw invalid(`${where}: templates cannot set a namespace.`);
+  }
+  assertSelector(workload?.spec?.selector, where);
+}
+
 /**
  * Validate parsed manifests and return the objects to apply: namespaced into the
  * project, stamped with ownership labels and a content hash, ordered so config and
@@ -130,7 +160,10 @@ export function admitProjectManifests(
   const seen = new Set<string>();
   const admitted = objects.map((source, index) => {
     const kind = source.kind;
-    const spec = kind ? PROJECT_MANIFEST_KINDS[kind] : undefined;
+    const spec =
+      kind && Object.hasOwn(PROJECT_MANIFEST_KINDS, kind)
+        ? PROJECT_MANIFEST_KINDS[kind]
+        : undefined;
     const where =
       `Document ${index + 1} (${kind ?? "no kind"} ${source.metadata?.name ?? ""})`.replace(
         " )",
@@ -148,24 +181,22 @@ export function admitProjectManifests(
       throw invalid(`${where}: metadata.name must be a valid lowercase DNS label.`);
     if (source.metadata.namespace && source.metadata.namespace !== owner.namespace)
       throw invalid(`${where}: objects must stay in the project's namespace.`);
-    if (source.metadata.ownerReferences?.length)
-      throw invalid(`${where}: ownerReferences are not allowed.`);
-    if ((source.metadata as Record<string, unknown>).finalizers)
-      throw invalid(`${where}: finalizers are not allowed.`);
-    assertNoReservedKeys(source.metadata.labels, "label", where);
-    assertNoReservedKeys(source.metadata.annotations, "annotation", where);
+    assertMetadata(source.metadata, where);
     const key = `${kind}/${name}`;
     if (seen.has(key)) throw invalid(`${where}: ${key} is defined more than once.`);
     seen.add(key);
 
     if (kind === "Service") {
+      assertNoReservedKeys(source.spec?.selector, "selector", where);
       const type = source.spec?.type ?? "ClusterIP";
       if (type !== "ClusterIP")
         throw invalid(`${where}: only ClusterIP services are allowed, not ${type}.`);
       if (source.spec?.externalIPs?.length) throw invalid(`${where}: externalIPs are not allowed.`);
     }
-    if (kind === "Deployment" || kind === "Job" || kind === "CronJob")
+    if (kind === "Deployment" || kind === "Job" || kind === "CronJob") {
+      assertWorkloadMetadata(source, where);
       assertPodSpec(podSpecOf(source), where);
+    }
 
     const object = structuredClone(source);
     delete object.status;
@@ -194,7 +225,9 @@ export function admitProjectManifests(
 }
 
 export function projectManifestCollection(kind: string, namespace: string): string {
-  const spec = PROJECT_MANIFEST_KINDS[kind];
+  const spec = Object.hasOwn(PROJECT_MANIFEST_KINDS, kind)
+    ? PROJECT_MANIFEST_KINDS[kind]
+    : undefined;
   if (!spec) throw invalid(`Unsupported manifest kind: ${kind}`);
   const prefix = spec.apiVersion === "v1" ? "/api/v1" : `/apis/${spec.apiVersion}`;
   return `${prefix}/namespaces/${namespace}/${spec.plural}`;
@@ -225,6 +258,11 @@ export interface ApplyProjectManifestsResult {
  * Apply admitted objects, then prune manifest objects of this project that are no
  * longer declared. Only objects carrying this project's manifest labels are ever
  * replaced or deleted; Openship's own app objects and anything foreign stay untouched.
+ * Jobs are create-only; other kinds use server-validated replacement. A dry-run
+ * validates the complete set before any mutation. This is NOT a cross-resource
+ * transaction: concurrent edits/network failures can still interrupt the commit.
+ * resourceVersion/UID preconditions reject stale writes, and pruning never runs
+ * after a failed create/update. There is no implicit delete-and-recreate fallback.
  */
 export async function applyProjectManifests(
   api: KubernetesApi,
@@ -238,6 +276,13 @@ export async function applyProjectManifests(
     unchanged: [],
     deleted: [],
   };
+  const writes: Array<{
+    method: "POST" | "PUT" | "DELETE";
+    path: string;
+    body: unknown;
+    ref: string;
+    result: "created" | "updated" | "deleted";
+  }> = [];
   const declared = new Set<string>();
   for (const object of objects) {
     const ref = `${object.kind}/${object.metadata.name}`;
@@ -251,8 +296,7 @@ export async function applyProjectManifests(
       if (!isMissing(error)) throw error;
     }
     if (!current) {
-      await api.request("POST", collection, object, signal);
-      result.created.push(ref);
+      writes.push({ method: "POST", path: collection, body: object, ref, result: "created" });
       continue;
     }
     assertManifestOwned(current, owner);
@@ -263,16 +307,23 @@ export async function applyProjectManifests(
       result.unchanged.push(ref);
       continue;
     }
+    if (PROJECT_MANIFEST_KINDS[object.kind!]!.update === "create-only")
+      throw new AppError(
+        `${ref} cannot be changed after creation. Use a new Job name to run a changed definition. No manifests were changed.`,
+        409,
+        "CLUSTER_MANIFEST_IMMUTABLE",
+      );
     const replacement = structuredClone(object);
+    replacement.metadata.uid = current.metadata.uid;
     replacement.metadata.resourceVersion = current.metadata.resourceVersion;
     if (object.kind === "Service") {
       // The API server assigns these once; a replacement must carry them unchanged.
       replacement.spec = { ...replacement.spec };
-      if (current.spec?.clusterIP) replacement.spec.clusterIP = current.spec.clusterIP;
-      if (current.spec?.clusterIPs) replacement.spec.clusterIPs = current.spec.clusterIPs;
+      for (const field of ["clusterIP", "clusterIPs", "ipFamilies", "ipFamilyPolicy"])
+        if (replacement.spec[field] === undefined && current.spec?.[field] !== undefined)
+          replacement.spec[field] = current.spec[field];
     }
-    await api.request("PUT", path, replacement, signal);
-    result.updated.push(ref);
+    writes.push({ method: "PUT", path, body: replacement, ref, result: "updated" });
   }
 
   const selector = Object.entries(projectManifestLabels(owner))
@@ -290,17 +341,41 @@ export async function applyProjectManifests(
       const ref = `${kind}/${item.metadata.name}`;
       if (declared.has(ref) || item.metadata.deletionTimestamp) continue;
       assertManifestOwned({ ...item, kind }, owner);
-      try {
-        await api.request(
-          "DELETE",
-          `${collection}/${item.metadata.name}`,
-          { propagationPolicy: "Foreground", preconditions: { uid: item.metadata.uid } },
-          signal,
-        );
-        result.deleted.push(ref);
-      } catch (error) {
-        if (!isMissing(error)) throw error;
-      }
+      writes.push({
+        method: "DELETE",
+        path: `${collection}/${item.metadata.name}`,
+        body: {
+          propagationPolicy: "Foreground",
+          preconditions: { uid: item.metadata.uid, resourceVersion: item.metadata.resourceVersion },
+        },
+        ref,
+        result: "deleted",
+      });
+    }
+  }
+  // Kubernetes owns schema validation, defaults and immutable-field rules.
+  // Preflight EVERY write before committing the first one; a late validation or
+  // ownership failure must not leave earlier ConfigMaps/Secrets partly updated.
+  for (const write of writes) {
+    // DELETE decodes DeleteOptions from the body; its query alone is not enough
+    // when a body is present. Without this, a supposed preflight can really delete.
+    const body =
+      write.method === "DELETE"
+        ? { ...(write.body as Record<string, unknown>), dryRun: ["All"] }
+        : write.body;
+    await api.request(
+      write.method,
+      `${write.path}?dryRun=All&fieldValidation=Strict`,
+      body,
+      signal,
+    );
+  }
+  for (const write of writes) {
+    try {
+      await api.request(write.method, write.path, write.body, signal);
+      result[write.result].push(write.ref);
+    } catch (error) {
+      if (write.method !== "DELETE" || !isMissing(error)) throw error;
     }
   }
   return result;

@@ -6,6 +6,13 @@ Runtime security notices use the signed feed published from `security-advisories
 
 ## Unreleased
 
+- **Add a scoped Kubernetes manifest foundation** — admit supported resources into
+  a project's namespace with ownership checks on objects, pod/job templates and
+  selectors. Validate the full change against Kubernetes before writing, reject
+  changed Job definitions, and preserve conflict checks when updating or pruning.
+  Exercise apply, update and cleanup against K3s in CI and the release gate. This
+  foundation does not yet expose a manifest upload UI or deployment route (#1039).
+
 - **OpenShip Earn** — explain the Cloud affiliate program at `/affiliates`, with
   an interactive commission split, monthly and annual reward timing, payout
   guidance, and a dedicated social preview. Label the dashboard affiliate entry

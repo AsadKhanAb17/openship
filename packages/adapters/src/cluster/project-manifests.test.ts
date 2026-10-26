@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { KubernetesApiError, type KubernetesApi, type KubernetesObject } from "./kubernetes-api";
 import {
   admitProjectManifests,
@@ -37,6 +37,15 @@ function fakeApi(seed: KubernetesObject[] = []) {
     async request(method: string, path: string, body?: unknown) {
       calls.push(`${method} ${path}`);
       const [base, query] = path.split("?");
+      if (new URLSearchParams(query).get("dryRun") === "All") {
+        if (
+          method === "PUT" &&
+          store.get(base!)?.metadata.resourceVersion !==
+            (body as KubernetesObject).metadata.resourceVersion
+        )
+          throw new KubernetesApiError(409, "conflict");
+        return structuredClone(body) as never;
+      }
       if (method === "GET" && query) {
         const selector = new URLSearchParams(query).get("labelSelector")!;
         const wanted = selector.split(",").map((pair) => pair.split("="));
@@ -280,5 +289,147 @@ describe("applyProjectManifests", () => {
       `${base}/app`,
       `${base}/web`,
     ]);
+  });
+});
+
+describe("manifest ownership boundaries", () => {
+  it.each(["Deployment", "Job", "CronJob"])("checks ownership inside %s pod templates", (kind) => {
+    const object = deployment() as KubernetesObject;
+    if (kind !== "Deployment") object.apiVersion = "batch/v1";
+    object.kind = kind;
+    if (kind === "CronJob")
+      object.spec = { schedule: "0 * * * *", jobTemplate: { spec: object.spec } };
+    const template =
+      kind === "CronJob" ? object.spec.jobTemplate.spec.template : object.spec.template;
+    for (const forbidden of [
+      { labels: { "openship.io/deployment": "existing-release" } },
+      { annotations: { "openship.io/manifest-hash": "owned" } },
+      { labels: { "app.kubernetes.io/managed-by": "openship" } },
+      { ownerReferences: [{ apiVersion: "v1", kind: "Pod", name: "app", uid: "other" }] },
+      { finalizers: ["example.test/keep"] },
+      { namespace: "other-project" },
+    ]) {
+      template.metadata = forbidden;
+      expect(() => admitProjectManifests([object], owner)).toThrow(
+        /reserved|ownerReferences|finalizers|namespace/,
+      );
+    }
+  });
+
+  it("checks CronJob-generated Job metadata as well as its pods", () => {
+    const job = { metadata: { finalizers: ["example.test/keep"] }, spec: deployment().spec };
+    expect(() =>
+      admitProjectManifests(
+        [
+          {
+            apiVersion: "batch/v1",
+            kind: "CronJob",
+            metadata: { name: "cron" },
+            spec: { schedule: "0 * * * *", jobTemplate: job },
+          },
+        ],
+        owner,
+      ),
+    ).toThrow(/finalizers/);
+  });
+
+  it.each([
+    { matchLabels: { "openship.io/deployment": "existing-release" } },
+    { matchExpressions: [{ key: "openship.io/deployment", operator: "Exists" }] },
+    {
+      matchExpressions: [
+        { key: "app.kubernetes.io/managed-by", operator: "NotIn", values: ["other"] },
+      ],
+    },
+  ])("rejects reserved workload selectors: %j", (selector) => {
+    const object = deployment() as KubernetesObject;
+    object.spec.selector = selector;
+    expect(() => admitProjectManifests([object], owner)).toThrow(/reserved selector/);
+  });
+
+  it("prevents a user Service from selecting Openship application pods", () => {
+    expect(() =>
+      admitProjectManifests(
+        [
+          {
+            apiVersion: "v1",
+            kind: "Service",
+            metadata: { name: "hijack" },
+            spec: {
+              selector: { "openship.io/deployment": "existing-release" },
+              ports: [{ port: 80 }],
+            },
+          },
+        ],
+        owner,
+      ),
+    ).toThrow(/reserved selector/);
+  });
+});
+
+describe("manifest preflight", () => {
+  const config = (value: string) => ({
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    metadata: { name: "settings" },
+    data: { value },
+  });
+  const apply = (api: KubernetesApi, objects: KubernetesObject[]) =>
+    applyProjectManifests(api, admitProjectManifests(objects, owner), owner);
+
+  it("does not write earlier objects when a later owned Job cannot change", async () => {
+    const { api, store, calls } = fakeApi();
+    const job = { ...deployment("task"), apiVersion: "batch/v1", kind: "Job" };
+    await apply(api, [config("before"), job]);
+    calls.length = 0;
+    const changed = structuredClone(job);
+    changed.spec.template.spec.containers[0]!.image = "nginx:1.28";
+    await expect(apply(api, [config("after"), changed])).rejects.toMatchObject({
+      code: "CLUSTER_MANIFEST_IMMUTABLE",
+    });
+    expect(store.get("/api/v1/namespaces/os-abc/configmaps/settings")!.data.value).toBe("before");
+    expect(calls.filter((c) => /^(POST|PUT|DELETE) /.test(c))).toEqual([]);
+  });
+
+  it("does not mutate or prune when the API rejects a later dry-run", async () => {
+    const { api, store, calls } = fakeApi();
+    await apply(api, [config("before"), deployment("stale")]);
+    const request = api.request.bind(api);
+    vi.spyOn(api, "request").mockImplementation(async (method, path, body, signal) => {
+      if (path.includes("deployments") && method === "POST" && path.includes("dryRun=All"))
+        throw new KubernetesApiError(422, "invalid pod spec");
+      return request(method, path, body, signal);
+    });
+    calls.length = 0;
+    await expect(apply(api, [config("after"), deployment("new")])).rejects.toThrow(
+      "invalid pod spec",
+    );
+    expect(store.get("/api/v1/namespaces/os-abc/configmaps/settings")!.data.value).toBe("before");
+    expect(store.has("/apis/apps/v1/namespaces/os-abc/deployments/stale")).toBe(true);
+    expect(calls.filter((c) => /^(POST|PUT|DELETE) /.test(c) && !c.includes("dryRun="))).toEqual(
+      [],
+    );
+  });
+
+  it("uses the inspected UID and version for pruning and stops if they change", async () => {
+    const { api, store } = fakeApi();
+    await apply(api, [config("before")]);
+    const request = api.request.bind(api);
+    const current = store.get("/api/v1/namespaces/os-abc/configmaps/settings")!;
+    vi.spyOn(api, "request").mockImplementation(async (method, path, body, signal) => {
+      if (method === "DELETE") {
+        expect(body).toMatchObject({
+          preconditions: {
+            uid: current.metadata.uid,
+            resourceVersion: current.metadata.resourceVersion,
+          },
+        });
+        if (!path.includes("dryRun="))
+          throw new KubernetesApiError(409, "resource version changed");
+      }
+      return request(method, path, body, signal);
+    });
+    await expect(apply(api, [])).rejects.toMatchObject({ statusCode: 409 });
+    expect(store.size).toBe(1);
   });
 });
