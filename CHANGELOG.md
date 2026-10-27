@@ -12,6 +12,39 @@ Runtime security notices use the signed feed published from `security-advisories
   changed Job definitions, and preserve conflict checks when updating or pruning.
   Exercise apply, update and cleanup against K3s in CI and the release gate. This
   foundation does not yet expose a manifest upload UI or deployment route (#1039).
+
+- **Preserve live Docker logs** — decode stdout and stderr independently across
+  split frames and UTF-8 characters, keep TTY logs intact, and report malformed or
+  truncated streams so the existing reconnect flow can recover (#1482).
+
+- **Support verified self-hosted OIDC sign-in** — discover a configured identity provider and
+  verify signed ID tokens, issuer, audience, expiry and sign-in nonce before
+  creating sessions. Preserve invitation and two-factor checks, require matching
+  UserInfo subjects, and refuse insecure or redirected provider endpoints. Require
+  verified email, scope accounts to the issuer and exact subject, and keep instance
+  OIDC disabled on Openship Cloud and outside local-account auth mode (#1489).
+
+- **Keep BuildKit sessions alive** — answer Docker’s session health checks so
+  builds can use optional secret mounts after long install/build steps. Close
+  sessions on completion, cancellation, and transport errors (#1488).
+
+- **Keep Cloud diagnostics available during replica startup** — allow bounded
+  schema initialization to wait for another replica, while preserving the short
+  write deadlines and local-log fallback used during normal operation.
+
+- **Recover health after a service container is replaced** — refresh only the
+  stale service binding when the continuous watcher verifies a healthy successor
+  under the same active deployment. Preserve native and Compose service identity
+  through managed edge updates and rollback; leave unrelated services and
+  deployment history intact (#1496).
+
+- **Scan private repositories with server credentials** — repository preparation,
+  monorepo folder selection and branch rescans use the shared GitHub credential
+  chain, including the selected self-hosted server's saved token. Without a
+  selection, only the active organization's local server is eligible. Borrowing
+  requires repository access and server write permission; SSH provisioning,
+  GitHub mutations and Cloud authentication remain unchanged (#1500).
+
 - **Match Laravel worker suggestions to production dependencies** — suggest the
   standard queue worker when Horizon is only in `require-dev`, matching the
   default Composer `--no-dev` install. Explicit role choices remain available (#1171).
