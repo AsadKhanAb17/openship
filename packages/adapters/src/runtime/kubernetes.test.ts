@@ -10,6 +10,10 @@ import type { DeployConfig } from "../types";
 import type { ClusterVolumeMount } from "@repo/core";
 import { kubernetesIdLabel } from "../cluster/kubernetes-label";
 import { clusterDatabaseNamespace } from "../cluster/database";
+import {
+  admitProjectManifests,
+  PROJECT_MANIFEST_LABEL,
+} from "../cluster/project-manifests";
 
 const image = `ghcr.io/team/api@sha256:${"a".repeat(64)}`;
 const config = (id = "deploy-1"): DeployConfig => ({
@@ -667,6 +671,66 @@ describe("Kubernetes workload lifecycle", () => {
     await fixture.runtime.cleanupProject("project-1");
     expect(fixture.resources.has(`/api/v1/namespaces/${fixture.runtime.namespace}`)).toBe(false);
   });
+  it("keeps manifest Deployments out of native release inventory and cleans their owned namespace", async () => {
+    const fixture = setup();
+    const deployment = await fixture.runtime.deploy(config());
+    const namespace = `/api/v1/namespaces/${fixture.runtime.namespace}`;
+    const manifest = admitProjectManifests(
+      [
+        {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          metadata: { name: "custom-api" },
+          spec: {
+            selector: { matchLabels: { app: "custom-api" } },
+            template: {
+              metadata: { labels: { app: "custom-api" } },
+              spec: { containers: [{ name: "api", image: "nginx:alpine" }] },
+            },
+          },
+        },
+      ],
+      { projectId: "project-1", runtimeId: "runtime-1", namespace: fixture.runtime.namespace },
+    )[0]!;
+    const created = await fixture.request(
+      "POST",
+      `/apis/apps/v1/namespaces/${fixture.runtime.namespace}/deployments`,
+      manifest,
+    );
+    expect(await fixture.runtime.listProjectContainerIds("project-1")).toEqual([
+      deployment.containerId,
+    ]);
+    await fixture.runtime.destroy(deployment.containerId!);
+    expect(await fixture.runtime.listProjectContainerIds("project-1")).toEqual([]);
+    discoverForCleanup(fixture, { kind: "Deployment", name: "deployments", value: created });
+    await fixture.runtime.cleanupProject("project-1");
+    expect(fixture.resources.has(namespace)).toBe(false);
+  });
+  it.each(["openship.io/project", "openship.io/runtime"])(
+    "still rejects foreign manifest Deployments with a mismatched %s",
+    async (label) => {
+      const fixture = setup();
+      const deployment = await fixture.runtime.deploy(config());
+      const namespace = `/api/v1/namespaces/${fixture.runtime.namespace}`;
+      const labels = {
+        ...fixture.resources.get(namespace)!.metadata.labels,
+        [PROJECT_MANIFEST_LABEL]: "true",
+        [label]: "foreign",
+      };
+      fixture.resources.set(
+        `/apis/apps/v1/namespaces/${fixture.runtime.namespace}/deployments/custom-api`,
+        { kind: "Deployment", metadata: { name: "custom-api", labels } },
+      );
+      await fixture.runtime.destroy(deployment.containerId!);
+      await expect(fixture.runtime.listProjectContainerIds("project-1")).rejects.toMatchObject({
+        code: "CLUSTER_WORKLOAD_OWNERSHIP",
+      });
+      await expect(fixture.runtime.cleanupProject("project-1")).rejects.toMatchObject({
+        code: "CLUSTER_WORKLOAD_OWNERSHIP",
+      });
+      expect(fixture.resources.has(namespace)).toBe(true);
+    },
+  );
   it.each(["PersistentVolumeClaim", "PostgresCluster"])(
     "preserves attached %s even with copied ownership labels and omitted item kind",
     async (kind) => {
